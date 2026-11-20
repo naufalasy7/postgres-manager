@@ -443,6 +443,15 @@ class RepositoryController extends Controller
             return response()->json(['message' => 'No files uploaded.'], 422);
         }
 
+        // Support folder upload with preserved relative paths
+        $relativePaths = $r->input('relative_paths');
+        if (is_string($relativePaths)) {
+            $relativePaths = json_decode($relativePaths, true) ?: [];
+        }
+        if (!is_array($relativePaths)) {
+            $relativePaths = [];
+        }
+
         $commitMsg = trim((string)$r->input('commit_message', ''));
         if (empty($commitMsg)) {
             $count = count($files);
@@ -452,20 +461,33 @@ class RepositoryController extends Controller
         $userEmail = $r->user()?->email ?? 'admin@localhost';
         $savedFiles = [];
 
-        foreach ($files as $file) {
+        foreach ($files as $idx => $file) {
             if (!$file->isValid()) continue;
-            $origName = $file->getClientOriginalName();
-            // Sanitize filename but retain extension
-            $safeName = basename($origName);
-            if ($safeName === '' || $safeName === '.git') continue;
 
-            $dest = $targetDir . '/' . $safeName;
-            $file->move($targetDir, $safeName);
-            $relPath = ltrim(($subpath ? ($subpath . '/' . $safeName) : $safeName), '/');
-            $savedFiles[] = $relPath;
+            $relGiven = $relativePaths[$idx] ?? $file->getClientOriginalName();
+            $relGiven = trim(str_replace('\\', '/', $relGiven), '/');
+
+            // Sanitize parts to prevent directory traversal
+            $parts = array_values(array_filter(explode('/', $relGiven), function ($p) {
+                return $p !== '' && $p !== '.' && $p !== '..' && $p !== '.git';
+            }));
+
+            if (empty($parts)) continue;
+
+            $safeRelPath = implode('/', $parts);
+            $fullRel = ltrim(($subpath ? ($subpath . '/' . $safeRelPath) : $safeRelPath), '/');
+            $destFile = $repoPath . '/' . $fullRel;
+            $destDir = dirname($destFile);
+
+            if (!is_dir($destDir)) {
+                File::makeDirectory($destDir, 0775, true, true);
+            }
+
+            $file->move($destDir, basename($destFile));
+            $savedFiles[] = $fullRel;
 
             try {
-                $this->runGit($repoPath, ['add', $relPath], $userEmail);
+                $this->runGit($repoPath, ['add', $fullRel], $userEmail);
             } catch (\Throwable $e) {}
         }
 
@@ -479,9 +501,9 @@ class RepositoryController extends Controller
             // Commit might fail if nothing changed
         }
 
-        Audit::log('repository.upload', "{$repo}: " . implode(', ', $savedFiles));
+        Audit::log('repository.upload', "{$repo}: " . implode(', ', array_slice($savedFiles, 0, 10)) . (count($savedFiles) > 10 ? '...' : ''));
         return response()->json([
-            'message' => 'Files uploaded and committed successfully.',
+            'message' => 'Files and folders uploaded and committed successfully.',
             'files' => $savedFiles,
         ]);
     }
