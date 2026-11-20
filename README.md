@@ -7,6 +7,7 @@ Dashboard web (Laravel 11 + React/TypeScript/Vite/Tailwind) untuk mengelola bany
 | Modul | Status |
 |---|---|
 | Login admin (session, CSRF, rate limit 5/menit, logout, audit login) | ✅ Ada |
+| Git Repositories (antarmuka mirip GitHub: file explorer, drag & drop upload, online code editor, download raw/zip, riwayat commit) | ✅ Ada |
 | Master DB + 11 tabel (migrations) + 4 template bawaan | ✅ Ada |
 | Dashboard: versi/host/port PG, koneksi, ukuran DB, CPU, RAM, disk, Tailscale | ✅ Ada (data nyata) |
 | Project manager: daftar, cari, buat, arsip (API) | ✅ Ada |
@@ -74,7 +75,13 @@ Dibuat otomatis oleh `run.sh` (`/etc/nginx/sites-available/postgres-manager`). B
 
 ## 6. Pemakaian singkat
 1. Login → Dashboard menampilkan metrik server nyata.
-2. **Proyek → + Proyek** → isi wizard → password proyek tampil **sekali**; tersimpan terenkripsi (APP_KEY) di master DB dan di `projects/<slug>/config/.env` (0600).
+2. **Repositories (Mirip GitHub)** → Jelajahi kode dan script SQL:
+   - **File Explorer**: Navigasi struktur folder, lihat ukuran dan pesan commit terakhir.
+   - **Drag & Drop Upload**: Tarik file langsung ke halaman web untuk mengunggah dan otomatis membuat commit Git.
+   - **Online Editor**: Edit file langsung di web dengan riwayat commit dan format diff.
+   - **Download Raw / ZIP**: Unduh file satuan atau seluruh repository dalam format .zip.
+   - **Multi-Repository**: Buat repository baru langsung dari web.
+3. **Proyek → + Proyek** → isi wizard → password proyek tampil **sekali**; tersimpan terenkripsi (APP_KEY) di master DB dan di `projects/<slug>/config/.env` (0600).
 3. Backup: `POST /api/projects/{id}/backups`; file di `projects/<slug>/backups/`.
 4. Full backup terjadwal: `0 2 * * * PGUSER=postgres PGPASSWORD=... /home/pi/Database/postgres-manager/deployment/scripts/backup-all.sh`
 5. Update: `./deployment/scripts/update.sh`

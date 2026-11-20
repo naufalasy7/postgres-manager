@@ -1,3 +1,25 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-950 text-slate-100 antialiased;
+  }
+}
+
+.markdown-body h1 { font-size: 1.75rem; font-weight: 700; border-bottom: 1px solid #334155; padding-bottom: 0.4em; margin-bottom: 1rem; margin-top: 1rem; }
+.markdown-body h2 { font-size: 1.35rem; font-weight: 600; border-bottom: 1px solid #334155; padding-bottom: 0.3em; margin-bottom: 0.75rem; margin-top: 1.25rem; }
+.markdown-body h3 { font-size: 1.15rem; font-weight: 600; margin-bottom: 0.5rem; margin-top: 1rem; }
+.markdown-body p { margin-bottom: 0.75rem; line-height: 1.6; color: #cbd5e1; }
+.markdown-body ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 0.75rem; color: #cbd5e1; }
+.markdown-body ol { list-style-type: decimal; padding-left: 1.5rem; margin-bottom: 0.75rem; color: #cbd5e1; }
+.markdown-body li { margin-bottom: 0.25rem; }
+.markdown-body code { background-color: rgba(110, 118, 129, 0.3); padding: 0.2em 0.4em; border-radius: 4px; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.markdown-body pre { background-color: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 0.875rem; overflow-x: auto; margin-bottom: 1rem; }
+.markdown-body pre code { background: none; padding: 0; color: #e2e8f0; }
+.markdown-body blockquote { border-left: 4px solid #38bdf8; padding-left: 0.875rem; color: #94a3b8; margin-bottom: 1rem; }
+.markdown-body table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; font-size: 0.875rem; }
+.markdown-body th, .markdown-body td { border: 1px solid #334155; padding: 6px 12px; }
+.markdown-body th { background-color: #1e293b; font-weight: 600; color: #f8fafc; }
+.markdown-body a { color: #38bdf8; text-decoration: underline; }

@@ -1,5 +1,11 @@
 <?php
-use App\Http\Controllers\Api\{AuthController, DashboardController, ProjectController, BackupController};
+use App\Http\Controllers\Api\{
+    AuthController,
+    DashboardController,
+    ProjectController,
+    BackupController,
+    RepositoryController
+};
 use App\Http\Middleware\EnsureAdmin;
 use Illuminate\Support\Facades\Route;
 
@@ -18,5 +24,17 @@ Route::prefix('api')->group(function () {
         Route::get('projects/{id}/backups', [BackupController::class, 'index']);
         Route::post('projects/{id}/backups', [BackupController::class, 'store']);
         Route::get('backups/{id}/download', [BackupController::class, 'download']);
+
+        // Git-like Repositories API
+        Route::get('repositories', [RepositoryController::class, 'index']);
+        Route::post('repositories', [RepositoryController::class, 'store']);
+        Route::get('repositories/{repo}/tree', [RepositoryController::class, 'tree']);
+        Route::get('repositories/{repo}/blob', [RepositoryController::class, 'blob']);
+        Route::get('repositories/{repo}/raw', [RepositoryController::class, 'raw']);
+        Route::get('repositories/{repo}/zip', [RepositoryController::class, 'zip']);
+        Route::post('repositories/{repo}/upload', [RepositoryController::class, 'upload']);
+        Route::post('repositories/{repo}/save-file', [RepositoryController::class, 'saveFile']);
+        Route::delete('repositories/{repo}/delete-file', [RepositoryController::class, 'deleteFile']);
+        Route::get('repositories/{repo}/commits', [RepositoryController::class, 'commits']);
     });
 });

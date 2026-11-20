@@ -7,3 +7,5 @@ storage/backups/*
 security/credentials/*
 *.dump
 logs/
+repositories/*
+!repositories/.gitkeep

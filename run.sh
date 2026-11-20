@@ -84,6 +84,7 @@ NODE_MAJOR="$(node -v | sed 's/v\([0-9]*\).*/\1/')"
 PHPV="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
 SOCK="/run/php/php${PHPV}-fpm.sock"
 sudo systemctl enable --now "php${PHPV}-fpm" nginx >/dev/null 2>&1 || true
+sudo git config --system --add safe.directory "*" 2>/dev/null || true
 
 # ---------------------------------------------------------------- 2. backend
 log "2/9 Backend Laravel"
@@ -180,7 +181,7 @@ log "8/9 Izin file untuk www-data"
 d="$ROOT"; while [ "$d" != "/" ]; do sudo setfacl -m u:www-data:--x "$d" || warn "setfacl gagal di $d"; d="$(dirname "$d")"; done
 sudo setfacl -R -m u:www-data:rX "$FRONT/dist"
 sudo setfacl -m u:www-data:r "$ENVF"
-for p in "$BACK/storage" "$BACK/bootstrap/cache" "$ROOT/projects" "$ROOT/storage"; do
+for p in "$BACK/storage" "$BACK/bootstrap/cache" "$ROOT/projects" "$ROOT/storage" "$ROOT/repositories"; do
   sudo setfacl -R -m "u:www-data:rwX,u:$USER:rwX" "$p"; sudo setfacl -R -d -m "u:www-data:rwX,u:$USER:rwX" "$p"
 done
 sudo systemctl reload "php${PHPV}-fpm"
