@@ -1,0 +1,9 @@
+.env
+app/backend/
+app/frontend/node_modules/
+app/frontend/dist/
+projects/*/
+storage/backups/*
+security/credentials/*
+*.dump
+logs/
