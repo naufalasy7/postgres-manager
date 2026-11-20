@@ -618,4 +618,30 @@ class RepositoryController extends Controller
 
         return response()->json($commits);
     }
+
+    public function sqlScripts(Request $r, string $repo)
+    {
+        $repoPath = $this->resolveRepoPath($repo);
+        $scripts = [];
+
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($repoPath, \FilesystemIterator::SKIP_DOTS)
+        );
+
+        foreach ($iterator as $file) {
+            if ($file->isFile() && in_array(strtolower($file->getExtension()), ['sql', 'pgsql'])) {
+                $sub = ltrim(substr($file->getPathname(), strlen($repoPath)), '/');
+                if (str_starts_with($sub, '.git')) continue;
+
+                $scripts[] = [
+                    'name' => $file->getFilename(),
+                    'path' => $sub,
+                    'size' => $file->getSize(),
+                ];
+            }
+        }
+
+        usort($scripts, fn($a, $b) => strcasecmp($a['path'], $b['path']));
+        return response()->json($scripts);
+    }
 }

@@ -20,13 +20,16 @@ import {
   FolderUp,
   Database,
   File as FileIcon,
-  Archive
+  Archive,
+  Play
 } from 'lucide-react'
 import { marked } from 'marked'
 
 interface Props {
   api: <T = any>(path: string, method?: string, body?: unknown) => Promise<T>
   xsrf: () => string
+  initialRepo?: string | null
+  onOpenProjectDashboard?: (projectId: number) => void
 }
 
 interface RepoItem {
@@ -172,12 +175,19 @@ async function getFilesFromDataTransfer(dataTransfer: DataTransfer): Promise<Upl
   return result
 }
 
-export default function GitHubRepoManager({ api, xsrf }: Props) {
+export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjectDashboard }: Props) {
   // Navigation & Repos
   const [repos, setRepos] = useState<RepoItem[]>([])
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [sortOption, setSortOption] = useState<'updated' | 'name' | 'commits'>('updated')
+
+  // Ecosystem & Projects Integration
+  const [projects, setProjects] = useState<any[]>([])
+  const [showExecModal, setShowExecModal] = useState(false)
+  const [targetProjectId, setTargetProjectId] = useState<string>('')
+  const [execResult, setExecResult] = useState<any>(null)
+  const [execBusy, setExecBusy] = useState(false)
 
   // Repository Detail View
   const [currentPath, setCurrentPath] = useState<string>('')
@@ -226,7 +236,14 @@ export default function GitHubRepoManager({ api, xsrf }: Props) {
 
   useEffect(() => {
     loadRepos()
+    api('/projects').then(setProjects).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (initialRepo) {
+      selectRepo(initialRepo)
+    }
+  }, [initialRepo])
 
   // Load directory tree
   const loadTree = async (repo: string, path: string) => {
@@ -1052,6 +1069,21 @@ export default function GitHubRepoManager({ api, xsrf }: Props) {
                     <span>Raw</span>
                   </a>
 
+                  {['sql', 'pgsql'].includes(activeFile.name.split('.').pop()?.toLowerCase() || '') && (
+                    <button
+                      onClick={() => {
+                        setExecResult(null)
+                        if (projects.length > 0) setTargetProjectId(String(projects[0].id))
+                        setShowExecModal(true)
+                      }}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-900/80 border border-emerald-700 text-emerald-200 hover:bg-emerald-800 font-medium"
+                      title="Eksekusi skrip ini langsung ke Database Proyek PostgreSQL"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                      <span>Jalankan di Database...</span>
+                    </button>
+                  )}
+
                   {!isEditing && (
                     <button
                       onClick={() => {
@@ -1441,6 +1473,126 @@ export default function GitHubRepoManager({ api, xsrf }: Props) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EXECUTE SQL SCRIPT ON PROJECT DATABASE */}
+      {showExecModal && activeFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-xl border border-slate-800 bg-slate-900 p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Database className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-semibold text-sm">Jalankan Skrip ke Database Proyek</h3>
+              </div>
+              <button onClick={() => setShowExecModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-2.5 rounded bg-slate-950 border border-slate-800 font-mono text-xs space-y-1">
+              <p className="text-slate-400">
+                Repository: <span className="text-white font-semibold">{selectedRepo}</span>
+              </p>
+              <p className="text-slate-400">
+                Skrip File: <span className="text-emerald-400 font-semibold">{activeFile.path}</span>
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1">
+                Pilih Target Database Proyek:
+              </label>
+              {projects.length === 0 ? (
+                <p className="text-xs text-red-400">
+                  Belum ada proyek database terdaftar. Buat proyek terlebih dahulu di tab Proyek DB.
+                </p>
+              ) : (
+                <select
+                  value={targetProjectId}
+                  onChange={e => setTargetProjectId(e.target.value)}
+                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-white focus:border-emerald-500 focus:outline-none"
+                >
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.db_name}) {p.repository ? `[Linked: ${p.repository}]` : ''}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {execResult && (
+              <div
+                className={`p-3 rounded-lg border text-xs space-y-2 ${
+                  execResult.status === 'success'
+                    ? 'bg-emerald-950/40 border-emerald-800 text-emerald-200'
+                    : 'bg-red-950/40 border-red-800 text-red-200'
+                }`}
+              >
+                <p className="font-semibold">{execResult.message}</p>
+                {execResult.columns && execResult.rows && execResult.rows.length > 0 && (
+                  <div className="max-h-36 overflow-auto rounded bg-slate-950 p-2 border border-slate-800 font-mono text-[11px]">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-slate-400">
+                          {execResult.columns.map((c: string) => (
+                            <th key={c} className="p-1">
+                              {c}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {execResult.rows.map((row: any, i: number) => (
+                          <tr key={i} className="border-b border-slate-900">
+                            {execResult.columns.map((c: string) => (
+                              <td key={c} className="p-1 text-slate-200">
+                                {String(row[c] ?? '')}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowExecModal(false)}
+                className="px-4 py-2 text-xs text-slate-400 hover:text-white"
+              >
+                Tutup
+              </button>
+              <button
+                type="button"
+                disabled={execBusy || !targetProjectId || projects.length === 0}
+                onClick={async () => {
+                  try {
+                    setExecBusy(true)
+                    setExecResult(null)
+                    const res = await api(`/projects/${targetProjectId}/execute-script`, 'POST', {
+                      repository: selectedRepo,
+                      path: activeFile.path
+                    })
+                    setExecResult(res)
+                  } catch (err: any) {
+                    setExecResult({ status: 'error', message: err.message || 'Eksekusi gagal.' })
+                  } finally {
+                    setExecBusy(false)
+                  }
+                }}
+                className="flex items-center gap-1.5 rounded-md bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>{execBusy ? 'Mengeksekusi...' : 'Eksekusi ke Database'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

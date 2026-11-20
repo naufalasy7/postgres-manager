@@ -19,6 +19,8 @@ Route::prefix('api')->group(function () {
         Route::get('projects', [ProjectController::class, 'index']);
         Route::post('projects', [ProjectController::class, 'store']);
         Route::post('projects/{id}/archive', [ProjectController::class, 'archive']);
+        Route::post('projects/{id}/link-repo', [ProjectController::class, 'linkRepo']);
+        Route::post('projects/{id}/execute-script', [ProjectController::class, 'executeScript']);
         Route::get('templates', [ProjectController::class, 'templates']);
         Route::get('audit', [ProjectController::class, 'audit']);
         Route::get('projects/{id}/backups', [BackupController::class, 'index']);
@@ -32,6 +34,7 @@ Route::prefix('api')->group(function () {
         Route::get('repositories/{repo}/blob', [RepositoryController::class, 'blob']);
         Route::get('repositories/{repo}/raw', [RepositoryController::class, 'raw']);
         Route::get('repositories/{repo}/zip', [RepositoryController::class, 'zip']);
+        Route::get('repositories/{repo}/sql-scripts', [RepositoryController::class, 'sqlScripts']);
         Route::post('repositories/{repo}/upload', [RepositoryController::class, 'upload']);
         Route::post('repositories/{repo}/save-file', [RepositoryController::class, 'saveFile']);
         Route::delete('repositories/{repo}/delete-file', [RepositoryController::class, 'deleteFile']);

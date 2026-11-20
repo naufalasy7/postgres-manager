@@ -36,6 +36,19 @@ class ProvisioningService {
             $tpl = DB::table('database_templates')->find($d['template_id']);
             if ($tpl && trim($tpl->sql_init ?? '') !== '') { $this->admin($db, $user, $pass)->exec($tpl->sql_init); $steps[] = "template '{$tpl->name}' diinisialisasi"; }
 
+            // Inisialisasi skrip SQL dari repository terhubung bila dipilih
+            if (!empty($d['repository']) && !empty($d['init_sql_path'])) {
+                $root = config('pgmanager.root') ?: base_path('../../');
+                $sqlFile = rtrim($root, '/') . '/repositories/' . trim($d['repository'], '/') . '/' . trim($d['init_sql_path'], '/');
+                if (file_exists($sqlFile)) {
+                    $repoSql = file_get_contents($sqlFile);
+                    if ($repoSql) {
+                        $this->admin($db, $user, $pass)->exec($repoSql);
+                        $steps[] = "skrip '{$d['init_sql_path']}' dari repo '{$d['repository']}' dieksekusi";
+                    }
+                }
+            }
+
             $dir = rtrim(config('pgmanager.root'), '/')."/projects/$slug";
             foreach (['config','migrations','backups','exports','logs'] as $s) if (!is_dir("$dir/$s")) mkdir("$dir/$s", 0750, true);
             $made['dir'] = $dir;
@@ -44,9 +57,18 @@ class ProvisioningService {
             $steps[] = 'direktori + .env (0600)';
 
             $pid = DB::transaction(function () use ($d, $dir, $pass) {
-                $id = DB::table('projects')->insertGetId(['name'=>$d['name'],'slug'=>$d['slug'],'description'=>$d['description'] ?? null,
-                    'template_id'=>$d['template_id'],'directory'=>$dir,'backup_policy'=>$d['backup_policy'],'created_by'=>auth()->id(),
-                    'created_at'=>now(),'updated_at'=>now()]);
+                $id = DB::table('projects')->insertGetId([
+                    'name' => $d['name'],
+                    'slug' => $d['slug'],
+                    'description' => $d['description'] ?? null,
+                    'template_id' => $d['template_id'],
+                    'repository' => $d['repository'] ?? null,
+                    'directory' => $dir,
+                    'backup_policy' => $d['backup_policy'],
+                    'created_by' => auth()->id(),
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ]);
                 DB::table('project_databases')->insert(['project_id'=>$id,'db_name'=>$d['db_name'],'db_user'=>$d['db_user'],'encoding'=>$d['encoding'],'locale'=>$d['locale'],'created_at'=>now(),'updated_at'=>now()]);
                 DB::table('database_connections')->insert(['project_id'=>$id,'host'=>config('pgmanager.host'),'port'=>config('pgmanager.port'),'db_name'=>$d['db_name'],'username'=>$d['db_user'],'password_encrypted'=>Crypt::encryptString($pass),'created_at'=>now(),'updated_at'=>now()]);
                 DB::table('database_operations')->insert(['project_id'=>$id,'operation'=>'provision','status'=>'ok','user_id'=>auth()->id(),'created_at'=>now(),'updated_at'=>now()]);
