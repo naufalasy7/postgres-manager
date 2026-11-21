@@ -12,7 +12,18 @@ import {
   ExternalLink,
   RefreshCw,
   Sliders,
-  GitBranch
+  GitBranch,
+  Rocket,
+  Square,
+  RotateCw,
+  Terminal,
+  Settings,
+  Copy,
+  Check,
+  Globe,
+  Radio,
+  Wifi,
+  Cpu
 } from 'lucide-react'
 import GitHubRepoManager from './components/GitHubRepoManager'
 
@@ -178,6 +189,86 @@ function Dashboard({
     }
   }
 
+  // Deployment handlers & state
+  const [deployBusy, setDeployBusy] = useState(false)
+  const [showLogs, setShowLogs] = useState(false)
+  const [deployLogs, setDeployLogs] = useState<string>('')
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const [settingsModal, setSettingsModal] = useState<any | null>(null)
+
+  const copyToClipboard = (text: string, key: string) => {
+    navigator.clipboard?.writeText(text)
+    setCopiedKey(key)
+    setTimeout(() => setCopiedKey(null), 2000)
+  }
+
+  const handleDeploy = async (projectId: number, options = {}) => {
+    try {
+      setDeployBusy(true)
+      await api(`/projects/${projectId}/deploy`, 'POST', options)
+      loadDashboard(selectedProjectId)
+    } catch (e: any) {
+      alert(e.message || 'Gagal melakukan deployment.')
+    } finally {
+      setDeployBusy(false)
+    }
+  }
+
+  const handleStop = async (projectId: number) => {
+    try {
+      setDeployBusy(true)
+      await api(`/projects/${projectId}/deploy/stop`, 'POST')
+      loadDashboard(selectedProjectId)
+    } catch (e: any) {
+      alert(e.message || 'Gagal menghentikan layanan.')
+    } finally {
+      setDeployBusy(false)
+    }
+  }
+
+  const handleRestart = async (projectId: number) => {
+    try {
+      setDeployBusy(true)
+      await api(`/projects/${projectId}/deploy/restart`, 'POST')
+      loadDashboard(selectedProjectId)
+    } catch (e: any) {
+      alert(e.message || 'Gagal me-restart layanan.')
+    } finally {
+      setDeployBusy(false)
+    }
+  }
+
+  const handleLoadLogs = async (projectId: number) => {
+    try {
+      const res = await api(`/projects/${projectId}/deploy/logs?lines=100`)
+      setDeployLogs(res.content || 'Belum ada log deployment.')
+      setShowLogs(true)
+    } catch (e: any) {
+      alert(e.message || 'Gagal memuat log.')
+    }
+  }
+
+  const handleSaveSettings = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!settingsModal) return
+    try {
+      setDeployBusy(true)
+      await api(`/projects/${settingsModal.project_id}/deploy/settings`, 'PUT', {
+        deploy_port: settingsModal.port,
+        deploy_type: settingsModal.type,
+        deploy_command: settingsModal.command,
+        deploy_dir: settingsModal.dir,
+        auto_deploy: settingsModal.auto_deploy,
+      })
+      setSettingsModal(null)
+      loadDashboard(selectedProjectId)
+    } catch (e: any) {
+      alert(e.message || 'Gagal menyimpan pengaturan.')
+    } finally {
+      setDeployBusy(false)
+    }
+  }
+
   if (!d && loading) return <p className="text-slate-400 text-sm">Memuat dashboard…</p>
   if (!d) return null
 
@@ -269,6 +360,314 @@ function Dashboard({
               )}
             </div>
           </div>
+
+          {/* ========================================================================= */}
+          {/* AUTO DEPLOY & SERVICE ACCESS (IP:PORT) SECTION                           */}
+          {/* ========================================================================= */}
+          {d.deployment && (
+            <div className="rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 p-5 shadow-2xl relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+
+              {/* Header Bar */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800 relative z-10">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`p-2.5 rounded-xl border ${
+                      d.deployment.deploy_status === 'running'
+                        ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-400 shadow-lg shadow-emerald-500/20'
+                        : d.deployment.deploy_status === 'failed'
+                        ? 'bg-red-950/80 border-red-500/50 text-red-400'
+                        : 'bg-slate-800 border-slate-700 text-slate-400'
+                    }`}
+                  >
+                    <Rocket className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2.5">
+                      <h3 className="text-base font-bold text-white">Auto Deploy & Akses Layanan</h3>
+                      {d.deployment.deploy_status === 'running' ? (
+                        <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-300 border border-emerald-700 shadow-sm shadow-emerald-900/50">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                          ONLINE (:{d.deployment.deploy_port})
+                        </span>
+                      ) : d.deployment.deploy_status === 'failed' ? (
+                        <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-950 text-red-400 border border-red-800">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          GAGAL / ERROR
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-400 border border-slate-700">
+                          <span className="w-2 h-2 rounded-full bg-slate-500" />
+                          OFFLINE / STOPPED
+                        </span>
+                      )}
+
+                      {d.deployment.auto_deploy && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-blue-950 text-blue-300 border border-blue-800">
+                          Auto-Deploy on Push
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Tipe Layanan:{' '}
+                      <span className="font-semibold text-slate-200">
+                        {d.deployment.deploy_type === 'builtin_api'
+                          ? 'Built-in PostgreSQL REST API & Explorer'
+                          : d.deployment.deploy_type === 'python_app'
+                          ? 'Aplikasi Web Python / FastAPI'
+                          : d.deployment.deploy_type === 'script_runner'
+                          ? 'Shell Script Runner'
+                          : d.deployment.deploy_type || 'Auto Detect'}
+                      </span>
+                      {d.deployment.uptime && ` • Uptime: ${d.deployment.uptime}`}
+                      {d.deployment.memory && ` • RAM: ${d.deployment.memory}`}
+                      {d.deployment.deploy_pid && ` • PID: ${d.deployment.deploy_pid}`}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Control Action Buttons */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {d.deployment.deploy_status === 'running' ? (
+                    <>
+                      <button
+                        disabled={deployBusy}
+                        onClick={() => handleRestart(d.project.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition border border-slate-700 disabled:opacity-50"
+                        title="Restart Layanan"
+                      >
+                        <RotateCw className={`w-3.5 h-3.5 ${deployBusy ? 'animate-spin' : ''}`} />
+                        <span>Restart</span>
+                      </button>
+                      <button
+                        disabled={deployBusy}
+                        onClick={() => handleStop(d.project.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900 text-xs font-semibold text-red-300 transition border border-red-800 disabled:opacity-50"
+                        title="Hentikan Layanan"
+                      >
+                        <Square className="w-3.5 h-3.5 fill-current" />
+                        <span>Stop</span>
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      disabled={deployBusy}
+                      onClick={() => handleDeploy(d.project.id)}
+                      className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-slate-950 transition shadow-lg shadow-emerald-600/30 disabled:opacity-50"
+                    >
+                      <Rocket className="w-4 h-4" />
+                      <span>{deployBusy ? 'Mendeploy...' : 'Auto Deploy Sekarang'}</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => handleLoadLogs(d.project.id)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition border border-slate-700"
+                    title="Lihat Log Real-time"
+                  >
+                    <Terminal className="w-3.5 h-3.5" />
+                    <span>Log</span>
+                  </button>
+
+                  <button
+                    onClick={() =>
+                      setSettingsModal({
+                        project_id: d.project.id,
+                        port: d.deployment.deploy_port || 8200,
+                        type: d.deployment.deploy_type || 'auto',
+                        command: d.deployment.deploy_command || '',
+                        dir: d.deployment.deploy_dir || '',
+                        auto_deploy: !!d.deployment.auto_deploy,
+                        detected_configs: d.deployment.detected_configs || []
+                      })
+                    }
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition border border-slate-700"
+                    title="Pengaturan Deployment"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                    <span>Pengaturan</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* URL Cards (IP & Port Access) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-4 relative z-10">
+                {/* 1. Akses LAN IP */}
+                <div
+                  className={`p-4 rounded-xl border transition ${
+                    d.deployment.deploy_status === 'running'
+                      ? 'bg-slate-950/80 border-emerald-600/40 hover:border-emerald-500 shadow-md shadow-emerald-950/20'
+                      : 'bg-slate-950/40 border-slate-800/80 opacity-60'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <Wifi className="w-4 h-4 text-emerald-400" />
+                      <span className="text-xs font-bold text-slate-300 uppercase tracking-wide">
+                        Akses Jaringan LAN
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                      Wi-Fi / Ethernet
+                    </span>
+                  </div>
+
+                  <p className="font-mono text-sm font-bold text-emerald-300 break-all select-all py-1">
+                    {d.deployment.urls?.lan ||
+                      `http://${d.deployment.system_ips?.lan}:${d.deployment.deploy_port || 8200}`}
+                  </p>
+
+                  <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-800/60">
+                    <a
+                      href={
+                        d.deployment.urls?.lan ||
+                        `http://${d.deployment.system_ips?.lan}:${d.deployment.deploy_port || 8200}`
+                      }
+                      target="_blank"
+                      rel="noreferrer"
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-md text-xs font-semibold transition ${
+                        d.deployment.deploy_status === 'running'
+                          ? 'bg-emerald-600 hover:bg-emerald-500 text-slate-950 shadow-sm shadow-emerald-600/20'
+                          : 'bg-slate-800 text-slate-500 pointer-events-none'
+                      }`}
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Buka Layanan</span>
+                    </a>
+                    <button
+                      onClick={() =>
+                        copyToClipboard(
+                          d.deployment.urls?.lan ||
+                            `http://${d.deployment.system_ips?.lan}:${d.deployment.deploy_port || 8200}`,
+                          'lan'
+                        )
+                      }
+                      className="flex items-center gap-1 py-1.5 px-2.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 transition"
+                      title="Salin URL LAN"
+                    >
+                      {copiedKey === 'lan' ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                      <span>{copiedKey === 'lan' ? 'Tersalin' : 'Salin'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. Akses Tailscale IP */}
+                <div
+                  className={`p-4 rounded-xl border transition ${
+                    d.deployment.deploy_status === 'running'
+                      ? 'bg-slate-950/80 border-blue-600/40 hover:border-blue-500 shadow-md shadow-blue-950/20'
+                      : 'bg-slate-950/40 border-slate-800/80 opacity-60'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-4 h-4 text-blue-400" />
+                      <span className="text-xs font-bold text-slate-300 uppercase tracking-wide">
+                        Akses Tailscale VPN
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-950/80 text-blue-400 border border-blue-900">
+                      Remote / Luar
+                    </span>
+                  </div>
+
+                  {d.deployment.urls?.tailscale ? (
+                    <>
+                      <p className="font-mono text-sm font-bold text-blue-300 break-all select-all py-1">
+                        {d.deployment.urls.tailscale}
+                      </p>
+                      <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-800/60">
+                        <a
+                          href={d.deployment.urls.tailscale}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-md text-xs font-semibold transition ${
+                            d.deployment.deploy_status === 'running'
+                              ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm shadow-blue-600/20'
+                              : 'bg-slate-800 text-slate-500 pointer-events-none'
+                          }`}
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>Buka Layanan</span>
+                        </a>
+                        <button
+                          onClick={() => copyToClipboard(d.deployment.urls.tailscale, 'ts')}
+                          className="flex items-center gap-1 py-1.5 px-2.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 transition"
+                          title="Salin URL Tailscale"
+                        >
+                          {copiedKey === 'ts' ? (
+                            <Check className="w-3.5 h-3.5 text-blue-400" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                          <span>{copiedKey === 'ts' ? 'Tersalin' : 'Salin'}</span>
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="py-3 text-xs text-slate-500 font-mono">
+                      Tailscale tidak aktif di server ini.
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. Port & Host Binding Info */}
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/80 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <Radio className="w-4 h-4 text-emerald-400" />
+                        <span className="text-xs font-bold text-slate-300 uppercase tracking-wide">
+                          Port & Binding
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-900">
+                        0.0.0.0
+                      </span>
+                    </div>
+
+                    <div className="flex items-baseline gap-2 mt-1">
+                      <span className="text-2xl font-bold font-mono text-white">
+                        :{d.deployment.deploy_port || 8200}
+                      </span>
+                      <span className="text-xs text-slate-400 font-mono">TCP HTTP</span>
+                    </div>
+
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Terbuka untuk semua antarmuka jaringan server (LAN, Tailscale, Localhost).
+                    </p>
+                  </div>
+
+                  <div className="pt-2 mt-2 border-t border-slate-800/60 flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                    <span>Local: 127.0.0.1:{d.deployment.deploy_port || 8200}</span>
+                    <span className={d.deployment.is_listening ? 'text-emerald-400' : 'text-slate-500'}>
+                      {d.deployment.is_listening ? '● Listening' : '○ Standby'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Deployment Error Banner if any */}
+              {d.deployment.deploy_error && (
+                <div className="mt-3 p-3 rounded-lg bg-red-950/50 border border-red-800 text-xs text-red-200 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-semibold">{d.deployment.deploy_error}</p>
+                    <button
+                      onClick={() => handleLoadLogs(d.project.id)}
+                      className="underline text-red-300 hover:text-white mt-0.5"
+                    >
+                      Buka Log Deployment untuk melihat rincian penyebab error
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Project DB Stats Cards */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -485,6 +884,129 @@ function Dashboard({
             {stat('Tailscale IP', d.system.tailscale_ip ?? 'tidak aktif')}
           </div>
 
+          {/* ========================================================================= */}
+          {/* GLOBAL DEPLOYED PROJECT SERVICES SECTION                                 */}
+          {/* ========================================================================= */}
+          {d.deployments && d.deployments.length > 0 && (
+            <div className={card + ' space-y-3'}>
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <div className="flex items-center gap-2">
+                  <Rocket className="w-4 h-4 text-emerald-400" />
+                  <h3 className="font-semibold text-sm text-white">
+                    Layanan Proyek Database Ter-Deploy (Active Services & Ports)
+                  </h3>
+                </div>
+                <span className="text-xs font-mono text-slate-400">
+                  {d.deployments.filter((x: any) => x.deploy_status === 'running').length} Aktif /{' '}
+                  {d.deployments.length} Total
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {d.deployments.map((dep: any) => (
+                  <div
+                    key={dep.project_id}
+                    className={`p-4 rounded-xl border flex flex-col justify-between transition ${
+                      dep.deploy_status === 'running'
+                        ? 'bg-slate-900/90 border-emerald-600/40 shadow-lg shadow-emerald-950/20'
+                        : 'bg-slate-900/40 border-slate-800 opacity-75'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-bold text-sm text-white truncate">{dep.name}</span>
+                        {dep.deploy_status === 'running' ? (
+                          <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            :{dep.deploy_port}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-400">
+                            Offline
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-xs text-slate-400 font-mono">
+                        DB: <span className="text-emerald-400">{dep.db_name}</span>
+                        {dep.repository ? ` • Repo: ${dep.repository}` : ''}
+                      </p>
+
+                      {dep.deploy_status === 'running' && dep.urls?.lan && (
+                        <div className="mt-3 p-2 rounded bg-slate-950 border border-slate-800/80 space-y-1">
+                          <div className="flex items-center justify-between text-[11px] font-mono">
+                            <span className="text-slate-500">LAN:</span>
+                            <a
+                              href={dep.urls.lan}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-emerald-300 hover:underline truncate max-w-[190px]"
+                            >
+                              {dep.urls.lan}
+                            </a>
+                          </div>
+                          {dep.urls.tailscale && (
+                            <div className="flex items-center justify-between text-[11px] font-mono">
+                              <span className="text-slate-500">TS:</span>
+                              <a
+                                href={dep.urls.tailscale}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-blue-300 hover:underline truncate max-w-[190px]"
+                              >
+                                {dep.urls.tailscale}
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 mt-4 pt-3 border-t border-slate-800">
+                      <button
+                        onClick={() => setSelectedProjectId(String(dep.project_id))}
+                        className="text-xs text-emerald-400 hover:underline font-medium"
+                      >
+                        Pantau Detail →
+                      </button>
+
+                      <div className="flex items-center gap-1.5">
+                        {dep.deploy_status === 'running' ? (
+                          <>
+                            <a
+                              href={dep.urls?.lan}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              <span>Buka</span>
+                            </a>
+                            <button
+                              onClick={() => handleStop(dep.project_id)}
+                              className="p-1 rounded bg-slate-800 hover:bg-red-950 text-slate-400 hover:text-red-300"
+                              title="Stop"
+                            >
+                              <Square className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => handleDeploy(dep.project_id)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-emerald-950 border border-slate-700 hover:border-emerald-700 text-emerald-300 text-xs font-medium"
+                          >
+                            <Rocket className="w-3 h-3" />
+                            <span>Deploy</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {d.postgres.up && (
             <div className={card}>
               <p className="mb-2 text-sm font-semibold text-slate-200">Ukuran Database di Server (MB)</p>
@@ -513,6 +1035,206 @@ function Dashboard({
           />
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: PENGATURAN DEPLOYMENT                                              */}
+      {/* ========================================================================= */}
+      {settingsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <form
+            onSubmit={handleSaveSettings}
+            className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900 p-6 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Settings className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-bold text-base text-white">Pengaturan Auto Deploy</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSettingsModal(null)}
+                className="text-slate-400 hover:text-white text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">
+                  Port Layanan (Binding 0.0.0.0)
+                </label>
+                <input
+                  type="number"
+                  min="1024"
+                  max="65535"
+                  className={inp}
+                  value={settingsModal.port}
+                  onChange={e => setSettingsModal({ ...settingsModal, port: parseInt(e.target.value) || 8200 })}
+                  placeholder="8200"
+                  required
+                />
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Port HTTP unik untuk proyek ini (misal: 8200, 8201, 8202).
+                </p>
+              </div>
+
+              {settingsModal.detected_configs && settingsModal.detected_configs.length > 0 && (
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1.5">
+                    Pilih Profil Peluncur (Auto Detected)
+                  </label>
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {settingsModal.detected_configs.map((cfg: any) => (
+                      <div
+                        key={cfg.id}
+                        onClick={() =>
+                          setSettingsModal({
+                            ...settingsModal,
+                            type: cfg.id,
+                            command: cfg.command,
+                            dir: cfg.dir
+                          })
+                        }
+                        className={`p-3 rounded-lg border cursor-pointer transition text-left ${
+                          settingsModal.type === cfg.id
+                            ? 'bg-emerald-950/70 border-emerald-500/80 text-white'
+                            : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-800/60'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <p className="font-bold text-xs">{cfg.name}</p>
+                          {cfg.recommended && (
+                            <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-900 text-emerald-300 border border-emerald-700">
+                              Disarankan
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">{cfg.description}</p>
+                        <p className="text-[10px] font-mono text-emerald-400/80 mt-1 truncate">
+                          {cfg.command}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">
+                  Perintah Eksekusi (Command)
+                </label>
+                <input
+                  type="text"
+                  className={inp + ' font-mono text-xs'}
+                  value={settingsModal.command}
+                  onChange={e => setSettingsModal({ ...settingsModal, command: e.target.value })}
+                  placeholder="Gunakan {PORT} sebagai placeholder port"
+                />
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Tersedia variabel env: <code className="text-emerald-400">PORT, HTTP_PORT, DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD</code>
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">Direktori Kerja (Working Directory)</label>
+                <input
+                  type="text"
+                  className={inp + ' font-mono text-xs'}
+                  value={settingsModal.dir}
+                  onChange={e => setSettingsModal({ ...settingsModal, dir: e.target.value })}
+                  placeholder="Kosongkan untuk direktori proyek default"
+                />
+              </div>
+
+              <div className="p-3 rounded-lg border border-slate-800 bg-slate-950/60 flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-slate-200">Auto Deploy Saat Ada Perubahan Repo</p>
+                  <p className="text-[11px] text-slate-400">
+                    Otomatis me-redeploy aplikasi saat ada file baru di-upload atau di-edit di Git Repository.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settingsModal.auto_deploy}
+                  onChange={e => setSettingsModal({ ...settingsModal, auto_deploy: e.target.checked })}
+                  className="w-5 h-5 rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-emerald-500 cursor-pointer"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setSettingsModal(null)}
+                className="px-4 py-2 text-xs text-slate-400 hover:text-white"
+              >
+                Batal
+              </button>
+              <button disabled={deployBusy} className={btn + ' text-xs font-semibold'}>
+                {deployBusy ? 'Menyimpan...' : 'Simpan Pengaturan'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: LOG DEPLOYMENT CONSOLE                                             */}
+      {/* ========================================================================= */}
+      {showLogs && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-3xl rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3 shadow-2xl flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Terminal className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-bold text-sm text-white">Log Konsol Deployment</h3>
+                {d.deployment?.deploy_port && (
+                  <span className="font-mono text-xs text-slate-400">(: {d.deployment.deploy_port})</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => d?.project?.id && handleLoadLogs(d.project.id)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 transition"
+                  title="Refresh Log"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Refresh</span>
+                </button>
+                <button
+                  onClick={() => copyToClipboard(deployLogs, 'logs')}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 transition"
+                  title="Salin Log"
+                >
+                  {copiedKey === 'logs' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  <span>{copiedKey === 'logs' ? 'Tersalin' : 'Salin'}</span>
+                </button>
+                <button
+                  onClick={() => setShowLogs(false)}
+                  className="text-slate-400 hover:text-white text-base font-bold px-2"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto rounded-lg bg-black/90 p-4 border border-slate-800/80 font-mono text-xs text-emerald-400 whitespace-pre leading-relaxed select-all">
+              {deployLogs || 'Belum ada catatan log.'}
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+              <span>Menampilkan output stdout & stderr proses deploy.</span>
+              <button
+                onClick={() => setShowLogs(false)}
+                className="px-3 py-1 rounded bg-slate-800 text-xs text-slate-300 hover:bg-slate-700 font-medium"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -537,8 +1259,75 @@ function Projects({
   const [selectedScript, setSelectedScript] = useState('')
   const [execResult, setExecResult] = useState<any>(null)
   const [busy, setBusy] = useState(false)
+  const [deployModal, setDeployModal] = useState<any | null>(null)
+  const [deployLoading, setDeployLoading] = useState(false)
+  const [deployLogs, setDeployLogs] = useState('')
+  const [showDeployLogs, setShowDeployLogs] = useState(false)
 
   const load = () => api('/projects?search=' + encodeURIComponent(q)).then(setRows)
+
+  const openDeployModal = async (project: any) => {
+    setDeployLoading(true)
+    setDeployModal({ project, data: null })
+    setShowDeployLogs(false)
+    try {
+      const res = await api(`/projects/${project.id}/deploy`)
+      setDeployModal({ project, data: res })
+    } catch (e: any) {
+      alert(e.message || 'Gagal memuat info deployment.')
+    } finally {
+      setDeployLoading(false)
+    }
+  }
+
+  const triggerDeployInModal = async (projectId: number, options = {}) => {
+    try {
+      setDeployLoading(true)
+      const res = await api(`/projects/${projectId}/deploy`, 'POST', options)
+      setDeployModal((prev: any) => ({ ...prev, data: res }))
+      load()
+    } catch (e: any) {
+      alert(e.message || 'Gagal deploy.')
+    } finally {
+      setDeployLoading(false)
+    }
+  }
+
+  const triggerStopInModal = async (projectId: number) => {
+    try {
+      setDeployLoading(true)
+      const res = await api(`/projects/${projectId}/deploy/stop`, 'POST')
+      setDeployModal((prev: any) => ({ ...prev, data: res }))
+      load()
+    } catch (e: any) {
+      alert(e.message || 'Gagal stop.')
+    } finally {
+      setDeployLoading(false)
+    }
+  }
+
+  const triggerRestartInModal = async (projectId: number) => {
+    try {
+      setDeployLoading(true)
+      const res = await api(`/projects/${projectId}/deploy/restart`, 'POST')
+      setDeployModal((prev: any) => ({ ...prev, data: res }))
+      load()
+    } catch (e: any) {
+      alert(e.message || 'Gagal restart.')
+    } finally {
+      setDeployLoading(false)
+    }
+  }
+
+  const loadLogsInModal = async (projectId: number) => {
+    try {
+      const res = await api(`/projects/${projectId}/deploy/logs?lines=100`)
+      setDeployLogs(res.content || 'Log kosong.')
+      setShowDeployLogs(true)
+    } catch (e: any) {
+      alert(e.message || 'Gagal memuat log.')
+    }
+  }
 
   useEffect(() => {
     load()
@@ -623,6 +1412,7 @@ function Projects({
                 <th className="py-2.5 pr-4">Database</th>
                 <th className="py-2.5 pr-4">User DB</th>
                 <th className="py-2.5 pr-4">Repository Git</th>
+                <th className="py-2.5 pr-4">Deploy Service</th>
                 <th className="py-2.5 pr-4">Status</th>
                 <th className="py-2.5 pr-4 text-right">Aksi Ekosistem</th>
               </tr>
@@ -656,12 +1446,33 @@ function Projects({
                     )}
                   </td>
                   <td className="py-3 pr-4">
+                    {r.deploy_status === 'running' ? (
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800 shadow-sm">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        :{r.deploy_port}
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-400">
+                        Offline
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-3 pr-4">
                     <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-300">
                       {r.status}
                     </span>
                   </td>
                   <td className="py-3 pr-4 text-right">
                     <div className="flex items-center justify-end gap-2 font-sans">
+                      <button
+                        onClick={() => openDeployModal(r)}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-emerald-300 font-medium border border-slate-700"
+                        title="Kelola Auto Deploy & Port"
+                      >
+                        <Rocket className="w-3 h-3 text-emerald-400" />
+                        <span>Deploy</span>
+                      </button>
+
                       <button
                         onClick={() => onSelectProjectForDashboard(r.id)}
                         className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-emerald-400 font-medium"
@@ -792,6 +1603,229 @@ function Projects({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Deploy Management on Project */}
+      {deployModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-900 p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <Rocket className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-bold text-base text-white">
+                  Auto Deploy Layanan: <span className="text-emerald-400">{deployModal.project.name}</span>
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeployModal(null)}
+                className="text-slate-400 hover:text-white text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {deployLoading && !deployModal.data ? (
+              <p className="text-sm text-slate-400 py-6 text-center">Memproses deployment…</p>
+            ) : deployModal.data ? (
+              <div className="space-y-4">
+                {/* Status Bar */}
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950 flex flex-wrap items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-slate-400">Status Saat Ini:</span>
+                      {deployModal.data.deploy_status === 'running' ? (
+                        <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-300 border border-emerald-700">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                          ONLINE (Port :{deployModal.data.deploy_port})
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-400">
+                          OFFLINE / STOPPED
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      Tipe: <span className="text-slate-200 font-semibold">{deployModal.data.deploy_type}</span>
+                      {deployModal.data.uptime && ` • Uptime: ${deployModal.data.uptime}`}
+                      {deployModal.data.memory && ` • RAM: ${deployModal.data.memory}`}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {deployModal.data.deploy_status === 'running' ? (
+                      <>
+                        <button
+                          disabled={deployLoading}
+                          onClick={() => triggerRestartInModal(deployModal.project.id)}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700"
+                        >
+                          <RotateCw className="w-3.5 h-3.5" />
+                          <span>Restart</span>
+                        </button>
+                        <button
+                          disabled={deployLoading}
+                          onClick={() => triggerStopInModal(deployModal.project.id)}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded bg-red-950 hover:bg-red-900 text-xs text-red-300 border border-red-800"
+                        >
+                          <Square className="w-3.5 h-3.5 fill-current" />
+                          <span>Stop</span>
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        disabled={deployLoading}
+                        onClick={() => triggerDeployInModal(deployModal.project.id)}
+                        className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-slate-950 shadow-md shadow-emerald-600/30"
+                      >
+                        <Rocket className="w-4 h-4" />
+                        <span>Deploy Sekarang</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => loadLogsInModal(deployModal.project.id)}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 border border-slate-700"
+                    >
+                      <Terminal className="w-3.5 h-3.5" />
+                      <span>Log</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Direct Access URLs */}
+                {deployModal.data.deploy_status === 'running' && deployModal.data.urls && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="p-3.5 rounded-xl border border-emerald-700/50 bg-slate-950 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                          <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+                          Akses Jaringan LAN
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-mono">Lokal</span>
+                      </div>
+                      <p className="font-mono text-xs text-emerald-300 font-bold truncate">
+                        {deployModal.data.urls.lan}
+                      </p>
+                      <a
+                        href={deployModal.data.urls.lan}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block text-center py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs"
+                      >
+                        Buka Layanan ↗
+                      </a>
+                    </div>
+
+                    <div className="p-3.5 rounded-xl border border-blue-700/50 bg-slate-950 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                          <Globe className="w-3.5 h-3.5 text-blue-400" />
+                          Akses Tailscale VPN
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-mono">Remote</span>
+                      </div>
+                      <p className="font-mono text-xs text-blue-300 font-bold truncate">
+                        {deployModal.data.urls.tailscale || 'Tidak aktif'}
+                      </p>
+                      {deployModal.data.urls.tailscale && (
+                        <a
+                          href={deployModal.data.urls.tailscale}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block text-center py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs"
+                        >
+                          Buka Layanan ↗
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Profiles Detection */}
+                {deployModal.data.detected_configs && deployModal.data.detected_configs.length > 0 && (
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-slate-300">
+                      Pilihan Profil Deployment:
+                    </label>
+                    <div className="space-y-2">
+                      {deployModal.data.detected_configs.map((cfg: any) => (
+                        <div
+                          key={cfg.id}
+                          className="p-3 rounded-xl border border-slate-800 bg-slate-950 flex items-center justify-between gap-3"
+                        >
+                          <div className="space-y-0.5 truncate">
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs font-bold text-white">{cfg.name}</p>
+                              {cfg.recommended && (
+                                <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">
+                                  Disarankan
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-slate-400 truncate">{cfg.description}</p>
+                          </div>
+                          <button
+                            disabled={deployLoading}
+                            onClick={() =>
+                              triggerDeployInModal(deployModal.project.id, {
+                                deploy_type: cfg.id,
+                                deploy_command: cfg.command,
+                                deploy_dir: cfg.dir
+                              })
+                            }
+                            className="shrink-0 flex items-center gap-1 px-3 py-1.5 rounded bg-slate-800 hover:bg-emerald-950 border border-slate-700 hover:border-emerald-700 text-xs text-emerald-300 font-semibold"
+                          >
+                            <Play className="w-3 h-3 fill-current" />
+                            <span>Deploy Profil Ini</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Embedded Logs Viewer */}
+                {showDeployLogs && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-300">Output Log Deployment:</span>
+                      <button
+                        onClick={() => setShowDeployLogs(false)}
+                        className="text-slate-500 hover:text-white"
+                      >
+                        Sembunyikan Log
+                      </button>
+                    </div>
+                    <pre className="max-h-48 overflow-y-auto rounded-lg bg-black/90 p-3 border border-slate-800 font-mono text-xs text-emerald-400 leading-relaxed">
+                      {deployLogs}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            <div className="flex justify-between items-center pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  onSelectProjectForDashboard(deployModal.project.id)
+                  setDeployModal(null)
+                }}
+                className="text-xs text-emerald-400 hover:underline flex items-center gap-1 font-semibold"
+              >
+                <span>Buka Detail di Dashboard</span> →
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDeployModal(null)}
+                className="px-4 py-1.5 text-xs text-slate-400 hover:text-white bg-slate-800 rounded-lg"
+              >
+                Tutup
+              </button>
+            </div>
           </div>
         </div>
       )}

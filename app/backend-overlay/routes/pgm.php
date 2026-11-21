@@ -4,7 +4,8 @@ use App\Http\Controllers\Api\{
     DashboardController,
     ProjectController,
     BackupController,
-    RepositoryController
+    RepositoryController,
+    DeploymentController
 };
 use App\Http\Middleware\EnsureAdmin;
 use Illuminate\Support\Facades\Route;
@@ -39,5 +40,14 @@ Route::prefix('api')->group(function () {
         Route::post('repositories/{repo}/save-file', [RepositoryController::class, 'saveFile']);
         Route::delete('repositories/{repo}/delete-file', [RepositoryController::class, 'deleteFile']);
         Route::get('repositories/{repo}/commits', [RepositoryController::class, 'commits']);
+
+        // Auto-Deployment & Service Access API
+        Route::get('deployments', [DeploymentController::class, 'index']);
+        Route::get('projects/{id}/deploy', [DeploymentController::class, 'show']);
+        Route::post('projects/{id}/deploy', [DeploymentController::class, 'deploy']);
+        Route::post('projects/{id}/deploy/stop', [DeploymentController::class, 'stop']);
+        Route::post('projects/{id}/deploy/restart', [DeploymentController::class, 'restart']);
+        Route::get('projects/{id}/deploy/logs', [DeploymentController::class, 'logs']);
+        Route::put('projects/{id}/deploy/settings', [DeploymentController::class, 'updateSettings']);
     });
 });

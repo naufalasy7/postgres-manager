@@ -184,6 +184,7 @@ class DashboardController extends Controller
                 'recent_ops' => $recentOps,
                 'repo_scripts' => $repoScripts,
                 'projects_list' => $projectsList,
+                'deployment' => app(\App\Services\DeploymentService::class)->getStatus($project->id),
             ]);
         }
 
@@ -226,6 +227,8 @@ class DashboardController extends Controller
             'postgres' => $pg,
             'projects' => DB::table('projects')->count(),
             'projects_list' => $projectsList,
+            'deployments' => app(\App\Services\DeploymentService::class)->getAllDeployments(),
+            'system_ips' => app(\App\Services\DeploymentService::class)->getSystemIps(),
             'system' => [
                 'cpu_percent' => min(100, round($load / $cores * 100, 1)),
                 'load1' => $load,

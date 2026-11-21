@@ -82,9 +82,14 @@ Dibuat otomatis oleh `run.sh` (`/etc/nginx/sites-available/postgres-manager`). B
    - **Download Raw / ZIP**: Unduh file satuan atau seluruh repository dalam format .zip.
    - **Multi-Repository**: Buat repository baru langsung dari web.
 3. **Proyek → + Proyek** → isi wizard → password proyek tampil **sekali**; tersimpan terenkripsi (APP_KEY) di master DB dan di `projects/<slug>/config/.env` (0600).
-3. Backup: `POST /api/projects/{id}/backups`; file di `projects/<slug>/backups/`.
-4. Full backup terjadwal: `0 2 * * * PGUSER=postgres PGPASSWORD=... /home/pi/Database/postgres-manager/deployment/scripts/backup-all.sh`
-5. Update: `./deployment/scripts/update.sh`
+4. **Auto Deploy Proyek Database & Akses via IP:Port**:
+   - Setiap proyek database dapat langsung di-deploy menjadi layanan web/API aktif.
+   - Deteksi profil aplikasi otomatis: Python FastAPI / Uvicorn, Shell Script, atau Built-in PostgreSQL REST API & Database Explorer.
+   - Layanan dialokasikan port unik (8200, 8201, dst.) dan dapat diakses langsung via IP LAN (`http://<LAN_IP>:<PORT>`) maupun Tailscale VPN (`http://<TS_IP>:<PORT>`).
+   - Status deployment, tombol kontrol (Auto Deploy, Restart, Stop), log konsol real-time, dan tautan akses langsung ditampilkan di Dashboard (per-proyek & global) serta tab Proyek DB.
+5. Backup: `POST /api/projects/{id}/backups`; file di `projects/<slug>/backups/`.
+6. Full backup terjadwal: `0 2 * * * PGUSER=postgres PGPASSWORD=... /home/pi/Database/postgres-manager/deployment/scripts/backup-all.sh`
+7. Update: `./deployment/scripts/update.sh`
 
 ## 7. Pengembangan lokal
 ```bash

@@ -502,6 +502,7 @@ class RepositoryController extends Controller
         }
 
         Audit::log('repository.upload', "{$repo}: " . implode(', ', array_slice($savedFiles, 0, 10)) . (count($savedFiles) > 10 ? '...' : ''));
+        $this->triggerAutoDeploy($repo);
         return response()->json([
             'message' => 'Files and folders uploaded and committed successfully.',
             'files' => $savedFiles,
@@ -543,6 +544,7 @@ class RepositoryController extends Controller
         }
 
         Audit::log($isNew ? 'repository.file_create' : 'repository.file_edit', "{$repo}/{$subpath}");
+        $this->triggerAutoDeploy($repo);
         return response()->json([
             'message' => 'File saved and committed successfully.',
             'path' => $subpath,
@@ -579,6 +581,7 @@ class RepositoryController extends Controller
         }
 
         Audit::log('repository.file_delete', "{$repo}/{$subpath}");
+        $this->triggerAutoDeploy($repo);
         return response()->json(['message' => "File {$filename} deleted."]);
     }
 
@@ -643,5 +646,18 @@ class RepositoryController extends Controller
 
         usort($scripts, fn($a, $b) => strcasecmp($a['path'], $b['path']));
         return response()->json($scripts);
+    }
+
+    protected function triggerAutoDeploy(string $repo): void
+    {
+        try {
+            $projects = \Illuminate\Support\Facades\DB::table('projects')
+                ->where('repository', $repo)
+                ->where('auto_deploy', true)
+                ->get();
+            foreach ($projects as $p) {
+                app(\App\Services\DeploymentService::class)->deploy($p->id);
+            }
+        } catch (\Throwable $e) {}
     }
 }
