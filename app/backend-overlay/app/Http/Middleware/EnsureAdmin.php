@@ -9,7 +9,11 @@ class EnsureAdmin
 {
     public function handle(Request $request, Closure $next): Response
     {
-        abort_unless($request->user()?->role === 'admin', 403);
+        $user = $request->user();
+        abort_unless($user !== null, 401, 'Silakan login terlebih dahulu.');
+
+        $allowedRoles = ['super_admin', 'admin', 'user'];
+        abort_unless(in_array($user->role, $allowedRoles) || $user->isSuperAdmin(), 403, 'Akses ditolak.');
 
         return $next($request);
     }

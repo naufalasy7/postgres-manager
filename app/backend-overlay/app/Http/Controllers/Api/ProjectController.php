@@ -13,6 +13,7 @@ class ProjectController extends Controller
     {
         $q = DB::table('projects')
             ->join('project_databases as d', 'd.project_id', '=', 'projects.id')
+            ->leftJoin('users as u', 'u.id', '=', 'projects.created_by')
             ->select(
                 'projects.id',
                 'projects.name',
@@ -26,6 +27,9 @@ class ProjectController extends Controller
                 'projects.auto_deploy',
                 'projects.directory',
                 'projects.created_at',
+                'projects.created_by',
+                'u.name as creator_name',
+                'u.email as creator_email',
                 'd.db_name',
                 'd.db_user'
             )
@@ -37,7 +41,19 @@ class ProjectController extends Controller
         if ($st = $r->query('status')) {
             $q->where('projects.status', $st);
         }
-        return response()->json($q->get());
+
+        $user = auth()->user();
+        $isSuper = $user?->isSuperAdmin() ?? false;
+        $currentUserId = $user?->id;
+
+        $results = $q->get()->map(function ($proj) use ($isSuper, $currentUserId) {
+            $isOwner = ($currentUserId && $proj->created_by == $currentUserId);
+            $proj->can_edit = $isSuper || $isOwner;
+            $proj->is_owner = $isOwner;
+            return $proj;
+        });
+
+        return response()->json($results);
     }
 
     public function store(Request $r, ProvisioningService $svc)
@@ -66,6 +82,14 @@ class ProjectController extends Controller
 
     public function archive(int $id)
     {
+        $user = auth()->user();
+        $project = DB::table('projects')->where('id', $id)->first();
+        if (!$project) abort(404, 'Proyek tidak ditemukan.');
+
+        if (!$user->isSuperAdmin() && $project->created_by != $user->id) {
+            abort(403, 'Akses ditolak: Hanya pemilik proyek atau Super Admin yang dapat mengarsipkan proyek ini.');
+        }
+
         DB::table('projects')->where('id', $id)->update(['status' => 'archived', 'updated_at' => now()]);
         Audit::log('project.archive', (string)$id);
         return response()->noContent();
@@ -77,8 +101,13 @@ class ProjectController extends Controller
             'repository' => 'nullable|string|max:100',
         ]);
 
+        $user = auth()->user();
         $project = DB::table('projects')->where('id', $id)->first();
         if (!$project) abort(404, 'Proyek tidak ditemukan.');
+
+        if (!$user->isSuperAdmin() && $project->created_by != $user->id) {
+            abort(403, 'Akses ditolak: Hanya pemilik proyek atau Super Admin yang dapat menghubungkan repository pada proyek ini.');
+        }
 
         DB::table('projects')->where('id', $id)->update([
             'repository' => $d['repository'] ?: null,
@@ -100,6 +129,7 @@ class ProjectController extends Controller
             'sql' => 'nullable|string',
         ]);
 
+        $user = auth()->user();
         $project = DB::table('projects')
             ->join('project_databases as d', 'd.project_id', '=', 'projects.id')
             ->join('database_connections as c', 'c.project_id', '=', 'projects.id')
@@ -109,6 +139,10 @@ class ProjectController extends Controller
 
         if (!$project) {
             abort(404, 'Proyek database tidak ditemukan.');
+        }
+
+        if (!$user->isSuperAdmin() && $project->created_by != $user->id) {
+            abort(403, 'Akses ditolak: Hanya pemilik proyek atau Super Admin yang dapat mengeksekusi skrip pada proyek ini.');
         }
 
         $sql = '';
@@ -223,6 +257,11 @@ class ProjectController extends Controller
 
     public function audit()
     {
+        $user = auth()->user();
+        if (!$user || !$user->isSuperAdmin()) {
+            abort(403, 'Akses ditolak: Hanya Super Admin yang dapat melihat semua riwayat database.');
+        }
+
         return response()->json(DB::table('audit_logs')->orderByDesc('id')->limit(200)->get());
     }
 }

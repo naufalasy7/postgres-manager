@@ -13,7 +13,7 @@ class CreateAdmin extends Command {
         $pw = env('PGM_INITIAL_PASSWORD') ?: $this->secret('Password admin (min 12 karakter)');
         if (strlen((string)$pw) < 12) { $this->error('Password minimal 12 karakter'); return 1; }
         $u = User::firstOrNew(['email' => $email]);
-        $u->forceFill(['name' => 'Administrator', 'password' => Hash::make($pw), 'role' => 'admin'])->save();
+        $u->forceFill(['name' => 'Administrator', 'password' => Hash::make($pw), 'role' => 'super_admin'])->save();
         $this->info("Admin siap: $email");
         return 0;
     }

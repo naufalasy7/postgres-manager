@@ -373,9 +373,10 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
       })
       fd.append('relative_paths', JSON.stringify(relativePaths))
 
-      const r = await fetch(`/api/repositories/${encodeURIComponent(selectedRepo)}/upload`, {
+      const apiBase = ((import.meta as any).env?.VITE_API_URL || '').replace(/\/$/, '')
+      const r = await fetch(`${apiBase}/api/repositories/${encodeURIComponent(selectedRepo)}/upload`, {
         method: 'POST',
-        credentials: 'same-origin',
+        credentials: 'include',
         body: fd,
         headers: {
           Accept: 'application/json',

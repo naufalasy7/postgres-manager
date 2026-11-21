@@ -5,14 +5,15 @@ use App\Http\Controllers\Api\{
     ProjectController,
     BackupController,
     RepositoryController,
-    DeploymentController
+    DeploymentController,
+    UserController
 };
-use App\Http\Middleware\EnsureAdmin;
+use App\Http\Middleware\{EnsureAdmin, EnsureSuperAdmin};
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api')->group(function () {
     Route::get('csrf', fn() => response()->noContent());
-    Route::post('login', [AuthController::class, 'login'])->middleware('throttle:5,1');
+    Route::post('login', [AuthController::class, 'login'])->middleware('throttle:10,1');
     Route::middleware(['auth', EnsureAdmin::class])->group(function () {
         Route::post('logout', [AuthController::class, 'logout']);
         Route::get('me', [AuthController::class, 'me']);
@@ -23,7 +24,6 @@ Route::prefix('api')->group(function () {
         Route::post('projects/{id}/link-repo', [ProjectController::class, 'linkRepo']);
         Route::post('projects/{id}/execute-script', [ProjectController::class, 'executeScript']);
         Route::get('templates', [ProjectController::class, 'templates']);
-        Route::get('audit', [ProjectController::class, 'audit']);
         Route::get('projects/{id}/backups', [BackupController::class, 'index']);
         Route::post('projects/{id}/backups', [BackupController::class, 'store']);
         Route::get('backups/{id}/download', [BackupController::class, 'download']);
@@ -49,5 +49,13 @@ Route::prefix('api')->group(function () {
         Route::post('projects/{id}/deploy/restart', [DeploymentController::class, 'restart']);
         Route::get('projects/{id}/deploy/logs', [DeploymentController::class, 'logs']);
         Route::put('projects/{id}/deploy/settings', [DeploymentController::class, 'updateSettings']);
+
+        // Super Admin Only: Full Audit Logs & User Management
+        Route::middleware([EnsureSuperAdmin::class])->group(function () {
+            Route::get('audit', [ProjectController::class, 'audit']);
+            Route::get('users', [UserController::class, 'index']);
+            Route::post('users', [UserController::class, 'store']);
+            Route::delete('users/{id}', [UserController::class, 'destroy']);
+        });
     });
 });

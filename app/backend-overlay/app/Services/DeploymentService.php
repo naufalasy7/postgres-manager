@@ -116,7 +116,7 @@ class DeploymentService
             'id' => 'builtin_api',
             'name' => 'Built-in PostgreSQL REST API & Database Explorer',
             'command' => "php -S 0.0.0.0:{PORT} {$builtinScript}",
-            'dir' => "{$this->root}/projects/{$project->slug}",
+            'dir' => !empty($project->directory) ? $project->directory : "{$this->root}/projects/{$project->slug}",
             'description' => 'Layanan RESTful API otomatis (GET/POST/PUT/DELETE) dan web browser penjelajah data langsung untuk database ini tanpa konfigurasi tambahan.',
             'recommended' => empty($repoDir) || !is_dir($repoDir),
         ];
@@ -312,7 +312,7 @@ class DeploymentService
         }
 
         $slug = $project->slug;
-        $projectDir = "{$this->root}/projects/{$slug}";
+        $projectDir = !empty($project->directory) ? $project->directory : "{$this->root}/projects/{$slug}";
         if (!is_dir($projectDir)) {
             mkdir($projectDir, 0755, true);
         }
@@ -514,7 +514,8 @@ class DeploymentService
         }
 
         // Clean PID file
-        $pidFile = "{$this->root}/projects/{$project->slug}/deploy.pid";
+        $projectDir = !empty($project->directory) ? $project->directory : "{$this->root}/projects/{$project->slug}";
+        $pidFile = "{$projectDir}/deploy.pid";
         if (file_exists($pidFile)) {
             @unlink($pidFile);
         }
@@ -560,7 +561,8 @@ class DeploymentService
             abort(404, 'Proyek tidak ditemukan.');
         }
 
-        $logFile = "{$this->root}/projects/{$project->slug}/logs/deploy.log";
+        $projectDir = !empty($project->directory) ? $project->directory : "{$this->root}/projects/{$project->slug}";
+        $logFile = "{$projectDir}/logs/deploy.log";
         if (!file_exists($logFile)) {
             return [
                 'project_id' => $projectId,

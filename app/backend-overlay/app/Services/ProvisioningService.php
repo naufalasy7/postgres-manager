@@ -49,7 +49,19 @@ class ProvisioningService {
                 }
             }
 
-            $dir = rtrim(config('pgmanager.root'), '/')."/projects/$slug";
+            $currentUser = auth()->user();
+            $root = rtrim(config('pgmanager.root') ?: base_path('../../'), '/');
+            if ($currentUser && !$currentUser->isSuperAdmin()) {
+                $userFolder = \Illuminate\Support\Str::slug($currentUser->name ?: explode('@', $currentUser->email)[0]) ?: "user_{$currentUser->id}";
+                $userBaseDir = "$root/projects/$userFolder";
+                if (!is_dir($userBaseDir)) {
+                    @mkdir($userBaseDir, 0775, true);
+                    @file_put_contents("$userBaseDir/.gitkeep", '');
+                }
+                $dir = "$userBaseDir/$slug";
+            } else {
+                $dir = "$root/projects/$slug";
+            }
             foreach (['config','migrations','backups','exports','logs'] as $s) if (!is_dir("$dir/$s")) mkdir("$dir/$s", 0750, true);
             $made['dir'] = $dir;
             $env = "DB_HOST=".config('pgmanager.host')."\nDB_PORT=".config('pgmanager.port')."\nDB_DATABASE=$db\nDB_USERNAME=$user\nDB_PASSWORD=$pass\n";

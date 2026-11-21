@@ -4,9 +4,20 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Services\DeploymentService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class DeploymentController extends Controller
 {
+    protected function authorizeProject(int $id)
+    {
+        $user = auth()->user();
+        $project = DB::table('projects')->where('id', $id)->first();
+        if (!$project) abort(404, 'Proyek tidak ditemukan.');
+        if (!$user->isSuperAdmin() && $project->created_by != $user->id) {
+            abort(403, 'Akses ditolak: Hanya pemilik proyek atau Super Admin yang dapat mengelola service deployment proyek ini.');
+        }
+    }
+
     public function index(DeploymentService $svc)
     {
         return response()->json($svc->getAllDeployments());
@@ -19,6 +30,8 @@ class DeploymentController extends Controller
 
     public function deploy(Request $r, int $id, DeploymentService $svc)
     {
+        $this->authorizeProject($id);
+
         $d = $r->validate([
             'port' => 'nullable|integer|min:1024|max:65535',
             'deploy_type' => 'nullable|string|max:50',
@@ -32,11 +45,13 @@ class DeploymentController extends Controller
 
     public function stop(int $id, DeploymentService $svc)
     {
+        $this->authorizeProject($id);
         return response()->json($svc->stop($id));
     }
 
     public function restart(int $id, DeploymentService $svc)
     {
+        $this->authorizeProject($id);
         return response()->json($svc->restart($id));
     }
 
@@ -48,6 +63,8 @@ class DeploymentController extends Controller
 
     public function updateSettings(Request $r, int $id, DeploymentService $svc)
     {
+        $this->authorizeProject($id);
+
         $d = $r->validate([
             'deploy_port' => 'nullable|integer|min:1024|max:65535',
             'deploy_type' => 'nullable|string|max:50',

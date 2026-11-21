@@ -9,7 +9,12 @@ class BackupController extends Controller {
     public function index(int $id) { return DB::table('database_backups')->where('project_id', $id)->orderByDesc('id')->get(); }
 
     public function store(int $id) {
+        $user = auth()->user();
         $p = DB::table('projects')->find($id) ?? abort(404);
+        if (!$user->isSuperAdmin() && $p->created_by != $user->id) {
+            abort(403, 'Akses ditolak: Hanya pemilik proyek atau Super Admin yang dapat membuat backup.');
+        }
+
         $c = DB::table('database_connections')->where('project_id', $id)->first();
         $file = "{$p->directory}/backups/{$c->db_name}_".date('Ymd_His').'.dump';
         // argumen array: tanpa shell, tanpa input mentah dari browser

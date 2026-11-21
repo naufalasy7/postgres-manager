@@ -23,9 +23,26 @@ import {
   Globe,
   Radio,
   Wifi,
-  Cpu
+  Cpu,
+  Users,
+  UserPlus,
+  UserCheck,
+  ShieldCheck,
+  Lock,
+  User,
+  Folder
 } from 'lucide-react'
 import GitHubRepoManager from './components/GitHubRepoManager'
+
+export interface AuthUser {
+  id: number
+  name: string
+  email: string
+  role: string
+  is_super_admin: boolean
+}
+
+const API_BASE = ((import.meta as any).env?.VITE_API_URL || '').replace(/\/$/, '')
 
 const xsrf = () =>
   decodeURIComponent(
@@ -36,9 +53,9 @@ const xsrf = () =>
   )
 
 async function api<T = any>(path: string, method = 'GET', body?: unknown): Promise<T> {
-  const r = await fetch('/api' + path, {
+  const r = await fetch(API_BASE + '/api' + path, {
     method,
-    credentials: 'same-origin',
+    credentials: 'include',
     body: body ? JSON.stringify(body) : undefined,
     headers: {
       Accept: 'application/json',
@@ -1243,9 +1260,11 @@ function Dashboard({
 // PROJECTS MANAGER WITH LINKED REPOSITORIES
 // =========================================================================
 function Projects({
+  currentUser,
   onSelectProjectForDashboard,
   onOpenRepo
 }: {
+  currentUser?: AuthUser | null
   onSelectProjectForDashboard: (id: number) => void
   onOpenRepo: (repo: string) => void
 }) {
@@ -1411,6 +1430,7 @@ function Projects({
                 <th className="py-2.5 pr-4">Nama Proyek</th>
                 <th className="py-2.5 pr-4">Database</th>
                 <th className="py-2.5 pr-4">User DB</th>
+                <th className="py-2.5 pr-4">Pemilik</th>
                 <th className="py-2.5 pr-4">Repository Git</th>
                 <th className="py-2.5 pr-4">Deploy Service</th>
                 <th className="py-2.5 pr-4">Status</th>
@@ -1426,6 +1446,19 @@ function Projects({
                   </td>
                   <td className="py-3 pr-4 text-emerald-400 font-semibold">{r.db_name}</td>
                   <td className="py-3 pr-4 text-slate-300">{r.db_user}</td>
+                  <td className="py-3 pr-4">
+                    {r.is_owner ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">
+                        <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
+                        Milik Anda
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-300 border border-slate-700">
+                        <User className="w-2.5 h-2.5 text-slate-400" />
+                        {r.creator_name || r.creator_email || 'Super Admin'}
+                      </span>
+                    )}
+                  </td>
                   <td className="py-3 pr-4">
                     {r.repository ? (
                       <button
@@ -1465,37 +1498,51 @@ function Projects({
                   <td className="py-3 pr-4 text-right">
                     <div className="flex items-center justify-end gap-2 font-sans">
                       <button
-                        onClick={() => openDeployModal(r)}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-emerald-300 font-medium border border-slate-700"
-                        title="Kelola Auto Deploy & Port"
-                      >
-                        <Rocket className="w-3 h-3 text-emerald-400" />
-                        <span>Deploy</span>
-                      </button>
-
-                      <button
                         onClick={() => onSelectProjectForDashboard(r.id)}
                         className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-emerald-400 font-medium"
+                        title="Pantau metrik & status database proyek ini"
                       >
                         Pantau DB
                       </button>
 
-                      {r.repository && (
-                        <button
-                          onClick={() => openExecuteModal(r)}
-                          className="px-2.5 py-1 rounded bg-emerald-950 hover:bg-emerald-900 border border-emerald-800 text-xs text-emerald-300 font-medium"
-                        >
-                          Jalankan Skrip
-                        </button>
-                      )}
+                      {r.can_edit ? (
+                        <>
+                          <button
+                            onClick={() => openDeployModal(r)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-emerald-300 font-medium border border-slate-700"
+                            title="Kelola Auto Deploy & Port"
+                          >
+                            <Rocket className="w-3 h-3 text-emerald-400" />
+                            <span>Deploy</span>
+                          </button>
 
-                      <button
-                        onClick={() => openLinkRepo(r)}
-                        className="px-2 py-1 text-xs text-slate-400 hover:text-white"
-                        title="Ubah Repository"
-                      >
-                        Repo
-                      </button>
+                          {r.repository && (
+                            <button
+                              onClick={() => openExecuteModal(r)}
+                              className="px-2.5 py-1 rounded bg-emerald-950 hover:bg-emerald-900 border border-emerald-800 text-xs text-emerald-300 font-medium"
+                              title="Eksekusi skrip SQL"
+                            >
+                              Jalankan Skrip
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => openLinkRepo(r)}
+                            className="px-2 py-1 text-xs text-slate-400 hover:text-white"
+                            title="Ubah Repository"
+                          >
+                            Repo
+                          </button>
+                        </>
+                      ) : (
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-900 border border-slate-800 text-[11px] text-slate-500 cursor-not-allowed"
+                          title="Mode Lihat Saja: Fitur edit, deploy, dan modifikasi terkunci untuk proyek milik role lain."
+                        >
+                          <Lock className="w-3 h-3 text-slate-500" />
+                          <span>Hanya Lihat</span>
+                        </span>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -2002,8 +2049,294 @@ function Wizard({ repos, onClose }: { repos: any[]; onClose: () => void }) {
   )
 }
 
+// =========================================================================
+// USER MANAGEMENT & ROLE-BASED ACCESS CONTROL (SUPER ADMIN ONLY)
+// =========================================================================
+function UserManager({ api }: { api: <T = any>(path: string, method?: string, body?: unknown) => Promise<T> }) {
+  const [users, setUsers] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [openModal, setOpenModal] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [success, setSuccess] = useState('')
+
+  const loadUsers = () => {
+    setLoading(true)
+    api('/users')
+      .then(setUsers)
+      .catch(e => setErr(e.message || 'Gagal memuat pengguna'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadUsers()
+  }, [])
+
+  const handleCreateUser = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    setBusy(true)
+    setErr('')
+    setSuccess('')
+    const f = new FormData(e.currentTarget)
+    try {
+      const res = await api('/users', 'POST', {
+        name: f.get('name'),
+        email: f.get('email'),
+        password: f.get('password'),
+        role: f.get('role'),
+      })
+      setSuccess(`Pengguna ${res.email} berhasil didaftarkan! Subfolder workspace '${res.subfolder}' telah dibuat otomatis.`)
+      setOpenModal(false)
+      loadUsers()
+    } catch (e: any) {
+      setErr(e.message || 'Gagal mendaftarkan pengguna.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleDeleteUser = async (u: any) => {
+    if (!confirm(`Yakin ingin menghapus pengguna '${u.email}'? Proyek yang telah dibuat pengguna ini tidak akan terhapus otomatis.`)) {
+      return
+    }
+    try {
+      await api(`/users/${u.id}`, 'DELETE')
+      loadUsers()
+    } catch (e: any) {
+      alert(e.message || 'Gagal menghapus pengguna.')
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-bold text-white tracking-wide flex items-center gap-2">
+            <Users className="w-5 h-5 text-emerald-400" />
+            Manajemen Pengguna & Hak Akses
+          </h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Kelola pendaftaran akun pengguna, hak akses role (Super Admin vs User/Operator), dan isolasi subfolder workspace proyek.
+          </p>
+        </div>
+        <button className={btn + ' flex items-center gap-1.5'} onClick={() => setOpenModal(true)}>
+          <UserPlus className="w-4 h-4" />
+          <span>+ Daftarkan Pengguna Baru</span>
+        </button>
+      </div>
+
+      {success && (
+        <div className="p-3 bg-emerald-950/60 border border-emerald-800 rounded-lg text-xs text-emerald-300 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{success}</span>
+        </div>
+      )}
+
+      {err && (
+        <div className="p-3 bg-red-950/60 border border-red-800 rounded-lg text-xs text-red-300 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+          <span>{err}</span>
+        </div>
+      )}
+
+      {/* Role explanation cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="rounded-xl border border-amber-900/50 bg-amber-950/20 p-4">
+          <div className="flex items-center gap-2 text-amber-400 font-bold text-sm mb-1">
+            <ShieldCheck className="w-4 h-4" />
+            <span>Role 1: Super Admin (nnaufalasyam7@gmail.com)</span>
+          </div>
+          <p className="text-xs text-slate-300">
+            Akses penuh tak terbatas: melihat & mengedit seluruh proyek dan repository, akses melihat riwayat lengkap database (Audit Log global), dan hak khusus mendaftarkan pengguna baru.
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-emerald-900/50 bg-emerald-950/20 p-4">
+          <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm mb-1">
+            <UserCheck className="w-4 h-4" />
+            <span>Role 2: User / Operator Terbatas</span>
+          </div>
+          <p className="text-xs text-slate-300">
+            Subfolder workspace terisolasi (diawali kosongan). Fitur terkunci untuk mengedit bagiannya sendiri. Dapat melihat (view) proyek role lain tanpa hak edit, serta akses riwayat database global terkunci.
+          </p>
+        </div>
+      </div>
+
+      {/* Users table */}
+      <div className={card + ' overflow-x-auto'}>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm font-semibold text-slate-200">Daftar Akun Terdaftar ({users.length})</p>
+          <button onClick={loadUsers} className="text-xs text-slate-400 hover:text-slate-200 flex items-center gap-1">
+            <RotateCw className="w-3.5 h-3.5" /> Segarkan
+          </button>
+        </div>
+
+        {loading ? (
+          <p className="text-sm text-slate-500 py-4">Memuat data pengguna...</p>
+        ) : users.length === 0 ? (
+          <p className="text-sm text-slate-500 py-4">Belum ada akun pengguna tambahan.</p>
+        ) : (
+          <table className="w-full text-left text-xs font-mono">
+            <thead className="text-slate-400 border-b border-slate-800">
+              <tr>
+                <th className="py-2.5 pr-4">Nama & Akun</th>
+                <th className="py-2.5 pr-4">Role Akses</th>
+                <th className="py-2.5 pr-4">Subfolder Workspace</th>
+                <th className="py-2.5 pr-4">Proyek Dibuat</th>
+                <th className="py-2.5 pr-4">Terdaftar</th>
+                <th className="py-2.5 pr-4 text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60 font-sans">
+              {users.map(u => (
+                <tr key={u.id} className="hover:bg-slate-800/30">
+                  <td className="py-3 pr-4">
+                    <p className="font-semibold text-slate-200">{u.name}</p>
+                    <p className="text-[11px] font-mono text-slate-400">{u.email}</p>
+                  </td>
+                  <td className="py-3 pr-4">
+                    {u.is_super_admin ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        <ShieldCheck className="w-3 h-3" />
+                        SUPER ADMIN
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        <UserCheck className="w-3 h-3" />
+                        {u.role === 'admin' ? 'ADMIN TERBATAS' : 'USER / OPERATOR'}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-3 pr-4 font-mono text-xs">
+                    <span className="flex items-center gap-1 text-slate-300 bg-slate-950 px-2 py-1 rounded border border-slate-800">
+                      <Folder className="w-3 h-3 text-emerald-400" />
+                      <span>{u.subfolder}</span>
+                    </span>
+                  </td>
+                  <td className="py-3 pr-4 font-mono text-slate-300">
+                    <span className="font-semibold text-emerald-400">{u.project_count}</span> proyek
+                  </td>
+                  <td className="py-3 pr-4 text-slate-400 text-xs">
+                    {u.created_at || '-'}
+                  </td>
+                  <td className="py-3 pr-4 text-right">
+                    {u.email === 'nnaufalasyam7@gmail.com' ? (
+                      <span className="text-[11px] text-slate-500 italic">Super Admin Utama</span>
+                    ) : (
+                      <button
+                        onClick={() => handleDeleteUser(u)}
+                        className="px-2.5 py-1 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/40 border border-red-900/60 rounded transition"
+                      >
+                        Hapus
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Modal: Daftarkan User Baru */}
+      {openModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <form
+            onSubmit={handleCreateUser}
+            className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 p-6 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h3 className="font-bold text-sm text-white flex items-center gap-2">
+                <UserPlus className="w-4 h-4 text-emerald-400" />
+                Daftarkan Pengguna Baru
+              </h3>
+              <button
+                type="button"
+                onClick={() => setOpenModal(false)}
+                className="text-slate-400 hover:text-white text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Nama Lengkap</label>
+                <input
+                  name="name"
+                  type="text"
+                  placeholder="Misal: Budi Santoso"
+                  className={inp}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Alamat Email (Untuk Login)</label>
+                <input
+                  name="email"
+                  type="email"
+                  placeholder="user@example.com"
+                  className={inp}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Kata Sandi (Min 8 Karakter)</label>
+                <input
+                  name="password"
+                  type="password"
+                  placeholder="••••••••"
+                  minLength={8}
+                  className={inp}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Role & Hak Akses</label>
+                <select name="role" defaultValue="user" className={inp}>
+                  <option value="user">User / Operator (Akses Terkunci ke Bagian Sendiri)</option>
+                  <option value="admin">Admin Terbatas (Akses Operasional Proyek Mandiri)</option>
+                </select>
+              </div>
+
+              <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 text-[11px] text-slate-400 space-y-1">
+                <p className="font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Folder className="w-3.5 h-3.5 text-emerald-400" />
+                  Struktur Subfolder Otomatis:
+                </p>
+                <p>
+                  Sistem otomatis menyiapkan subfolder workspace kosong di <code className="text-emerald-400 font-mono">projects/[user-name]/</code>.
+                </p>
+                <p>
+                  Pengguna ini dapat membuat & mengedit proyeknya sendiri, namun tidak memiliki akses melihat semua riwayat database atau mendaftarkan admin lain.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setOpenModal(false)}
+                className="px-4 py-2 text-xs text-slate-400 hover:text-white"
+              >
+                Batal
+              </button>
+              <button disabled={busy} className={btn + ' text-xs'}>
+                {busy ? 'Mendaftarkan...' : 'Daftarkan Pengguna'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function App() {
-  const [user, setUser] = useState<string | null | undefined>(undefined)
+  const [user, setUser] = useState<AuthUser | null | undefined>(undefined)
   const [tab, setTab] = useState('repos')
   const [audit, setAudit] = useState<any[]>([])
   const [dashboardTargetProjectId, setDashboardTargetProjectId] = useState<string | null>(null)
@@ -2011,8 +2344,8 @@ export default function App() {
 
   const boot = () =>
     api('/csrf')
-      .then(() => api('/me'))
-      .then((m: any) => setUser(m.email))
+      .then(() => api<AuthUser>('/me'))
+      .then(u => setUser(u))
       .catch(() => setUser(null))
 
   useEffect(() => {
@@ -2020,8 +2353,16 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (tab === 'audit') api('/audit').then(setAudit)
-  }, [tab])
+    if (tab === 'audit' && user?.is_super_admin) {
+      api('/audit').then(setAudit).catch(() => setAudit([]))
+    }
+  }, [tab, user])
+
+  useEffect(() => {
+    if (user && !user.is_super_admin && (tab === 'audit' || tab === 'users')) {
+      setTab('repos')
+    }
+  }, [user, tab])
 
   if (user === undefined) return null
   if (!user) return <Login onOk={boot} />
@@ -2052,7 +2393,7 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
-      <aside className="w-56 shrink-0 flex flex-col justify-between border-r border-slate-800/80 bg-slate-950 p-4">
+      <aside className="w-60 shrink-0 flex flex-col justify-between border-r border-slate-800/80 bg-slate-950 p-4">
         <div className="space-y-4">
           <div className="px-1">
             <h1 className="font-extrabold text-sm tracking-wider text-white">POSTGRES MANAGER</h1>
@@ -2062,15 +2403,32 @@ export default function App() {
             {navItem('repos', 'Repositories', <BookOpen className="w-4 h-4" />)}
             {navItem('dash', 'Dashboard', <LayoutDashboard className="w-4 h-4" />)}
             {navItem('proj', 'Proyek DB', <Database className="w-4 h-4" />)}
-            {navItem('audit', 'Audit Log', <ScrollText className="w-4 h-4" />)}
+            {user.is_super_admin && navItem('audit', 'Audit Log', <ScrollText className="w-4 h-4" />)}
+            {user.is_super_admin && navItem('users', 'Kelola Pengguna', <Users className="w-4 h-4" />)}
           </nav>
         </div>
 
         <div className="pt-4 border-t border-slate-800/60">
           <div className="px-2 pb-2">
-            <p className="text-[11px] text-slate-500 truncate">Logged in as:</p>
-            <p className="text-xs font-mono text-slate-300 truncate" title={user}>
-              {user}
+            <div className="flex items-center justify-between gap-1 mb-1">
+              <p className="text-[11px] text-slate-500">Login sebagai:</p>
+              {user.is_super_admin ? (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                  <ShieldCheck className="w-2.5 h-2.5" />
+                  SUPER ADMIN
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wider uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  <UserCheck className="w-2.5 h-2.5" />
+                  USER / OPERATOR
+                </span>
+              )}
+            </div>
+            <p className="text-xs font-semibold text-slate-200 truncate" title={user.name || user.email}>
+              {user.name || user.email}
+            </p>
+            <p className="text-[11px] font-mono text-slate-400 truncate" title={user.email}>
+              {user.email}
             </p>
           </div>
           <button
@@ -2109,16 +2467,20 @@ export default function App() {
         )}
         {tab === 'proj' && (
           <Projects
+            currentUser={user}
             onSelectProjectForDashboard={handleSelectProjectForDashboard}
             onOpenRepo={handleOpenRepoFromProject}
           />
         )}
-        {tab === 'audit' && (
+        {tab === 'audit' && user.is_super_admin && (
           <Table
-            title="Audit Log Aktivitas"
+            title="Audit Log Aktivitas Database (Super Admin)"
             rows={audit}
             cols={['created_at', 'user_id', 'action', 'subject', 'status', 'ip']}
           />
+        )}
+        {tab === 'users' && user.is_super_admin && (
+          <UserManager api={api} />
         )}
       </main>
     </div>
