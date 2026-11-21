@@ -10,6 +10,10 @@ PGPORT="${PGPORT:-5433}"; WEB_PORT="${WEB_PORT:-}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-nnaufalasyam7@gmail.com}"
 BACK="$ROOT/app/backend"; FRONT="$ROOT/app/frontend"; ENVF="$BACK/.env"
 CMD="${1:-install}"
+if [ "$CMD" = "tunnel" ]; then
+  shift || true
+  exec bash "$ROOT/tunnel.sh" "$@"
+fi
 log()  { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m!! %s\033[0m\n' "$*"; }
 die()  { trap - ERR; printf '\033[1;31mXX %s\033[0m\n' "$*" >&2; exit 1; }
