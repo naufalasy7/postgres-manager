@@ -92,6 +92,51 @@ class UserController extends Controller
         ], 201);
     }
 
+    public function update(Request $r, int $id)
+    {
+        $target = User::find($id);
+        if (!$target) {
+            abort(404, 'Pengguna tidak ditemukan.');
+        }
+
+        $d = $r->validate([
+            'name' => 'required|string|max:100',
+            'email' => "required|email|max:150|unique:users,email,{$id}",
+            'password' => 'nullable|string|min:6',
+            'role' => 'required|in:user,admin,super_admin',
+        ]);
+
+        // nnaufalasyam7@gmail.com must remain super_admin
+        if ($target->email === 'nnaufalasyam7@gmail.com' && $d['role'] !== 'super_admin') {
+            return response()->json(['message' => 'Akun Super Admin utama tidak dapat diubah rolenya.'], 422);
+        }
+
+        $target->name = $d['name'];
+        $target->email = $d['email'];
+        $target->role = $d['role'];
+
+        if (!empty($d['password'])) {
+            $target->password = Hash::make($d['password']);
+        }
+
+        $target->save();
+
+        Audit::log('user.update', $target->email, 'ok', [
+            'name' => $target->name,
+            'role' => $target->role,
+            'password_changed' => !empty($d['password']),
+        ]);
+
+        return response()->json([
+            'id' => $target->id,
+            'name' => $target->name,
+            'email' => $target->email,
+            'role' => $target->role,
+            'is_super_admin' => $target->isSuperAdmin(),
+            'message' => "Data pengguna '{$target->email}' berhasil diperbarui.",
+        ]);
+    }
+
     public function destroy(int $id)
     {
         $currentUser = auth()->user();

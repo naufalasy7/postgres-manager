@@ -33,7 +33,8 @@ import {
   Folder,
   Eye,
   EyeOff,
-  Server
+  Server,
+  Pencil
 } from 'lucide-react'
 import GitHubRepoManager from './components/GitHubRepoManager'
 
@@ -2258,6 +2259,7 @@ function UserManager({ api }: { api: <T = any>(path: string, method?: string, bo
   const [users, setUsers] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [openModal, setOpenModal] = useState(false)
+  const [editModalUser, setEditModalUser] = useState<any | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [success, setSuccess] = useState('')
@@ -2297,6 +2299,34 @@ function UserManager({ api }: { api: <T = any>(path: string, method?: string, bo
     }
   }
 
+  const handleUpdateUser = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (!editModalUser) return
+    setBusy(true)
+    setErr('')
+    setSuccess('')
+    const f = new FormData(e.currentTarget)
+    const name = f.get('name') as string
+    const email = f.get('email') as string
+    const password = f.get('password') as string
+    const role = f.get('role') as string
+
+    try {
+      const payload: any = { name, email, role }
+      if (password && password.trim().length > 0) {
+        payload.password = password.trim()
+      }
+      const res = await api(`/users/${editModalUser.id}`, 'PUT', payload)
+      setSuccess(`Data pengguna '${res.email}' berhasil diperbarui!`)
+      setEditModalUser(null)
+      loadUsers()
+    } catch (e: any) {
+      setErr(e.message || 'Gagal memperbarui pengguna.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const handleDeleteUser = async (u: any) => {
     if (!confirm(`Yakin ingin menghapus pengguna '${u.email}'? Proyek yang telah dibuat pengguna ini tidak akan terhapus otomatis.`)) {
       return
@@ -2318,7 +2348,7 @@ function UserManager({ api }: { api: <T = any>(path: string, method?: string, bo
             Manajemen Pengguna & Hak Akses
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Kelola pendaftaran akun pengguna, hak akses role (Super Admin vs User/Operator), dan isolasi subfolder workspace proyek.
+            Kelola pendaftaran akun pengguna, edit password, role, serta hak akses subfolder workspace proyek.
           </p>
         </div>
         <button className={btn + ' flex items-center gap-1.5'} onClick={() => setOpenModal(true)}>
@@ -2422,16 +2452,24 @@ function UserManager({ api }: { api: <T = any>(path: string, method?: string, bo
                     {u.created_at || '-'}
                   </td>
                   <td className="py-3 pr-4 text-right">
-                    {u.email === 'nnaufalasyam7@gmail.com' ? (
-                      <span className="text-[11px] text-slate-500 italic">Super Admin Utama</span>
-                    ) : (
+                    <div className="flex items-center justify-end gap-1.5">
                       <button
-                        onClick={() => handleDeleteUser(u)}
-                        className="px-2.5 py-1 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/40 border border-red-900/60 rounded transition"
+                        onClick={() => setEditModalUser(u)}
+                        className="px-2.5 py-1 text-xs text-amber-300 hover:text-amber-200 hover:bg-amber-950/40 border border-amber-800/60 rounded transition flex items-center gap-1"
+                        title="Edit Username, Password, atau Role"
                       >
-                        Hapus
+                        <Pencil className="w-3 h-3" />
+                        <span>Edit</span>
                       </button>
-                    )}
+                      {u.email !== 'nnaufalasyam7@gmail.com' && (
+                        <button
+                          onClick={() => handleDeleteUser(u)}
+                          className="px-2.5 py-1 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/40 border border-red-900/60 rounded transition"
+                        >
+                          Hapus
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -2528,6 +2566,104 @@ function UserManager({ api }: { api: <T = any>(path: string, method?: string, bo
               </button>
               <button disabled={busy} className={btn + ' text-xs'}>
                 {busy ? 'Mendaftarkan...' : 'Daftarkan Pengguna'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Modal: Edit Pengguna, Username, Password & Hak Akses */}
+      {editModalUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <form
+            onSubmit={handleUpdateUser}
+            className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 p-6 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h3 className="font-bold text-sm text-white flex items-center gap-2">
+                <Pencil className="w-4 h-4 text-amber-400" />
+                Edit Pengguna: {editModalUser.name}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditModalUser(null)}
+                className="text-slate-400 hover:text-white text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Nama Lengkap / Username</label>
+                <input
+                  name="name"
+                  type="text"
+                  defaultValue={editModalUser.name}
+                  className={inp}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Alamat Email (Login)</label>
+                <input
+                  name="email"
+                  type="email"
+                  defaultValue={editModalUser.email}
+                  className={inp}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Kata Sandi Baru (Opsional)
+                </label>
+                <input
+                  name="password"
+                  type="password"
+                  placeholder="Kosongkan jika tidak ingin mengubah password"
+                  minLength={6}
+                  className={inp}
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  💡 Biarkan kosong jika tidak ingin mengganti password saat ini.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Role & Hak Akses</label>
+                {editModalUser.email === 'nnaufalasyam7@gmail.com' ? (
+                  <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-amber-300">
+                    Akun ini adalah <strong>Super Admin Utama</strong> (role terkunci).
+                    <input type="hidden" name="role" value="super_admin" />
+                  </div>
+                ) : (
+                  <select name="role" defaultValue={editModalUser.role} className={inp}>
+                    <option value="user">User / Operator Terbatas (Hanya subfolder proyek sendiri)</option>
+                    <option value="admin">Admin Terbatas (Akses Operasional Proyek Mandiri)</option>
+                    <option value="super_admin">Super Admin (Akses Penuh Seluruh Proyek & Pengguna)</option>
+                  </select>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setEditModalUser(null)}
+                className="px-4 py-2 text-xs text-slate-400 hover:text-slate-200 border border-slate-800 rounded-lg"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={busy}
+                className={btn + ' px-4 py-2 text-xs flex items-center gap-1.5'}
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>{busy ? 'Menyimpan...' : 'Simpan Perubahan'}</span>
               </button>
             </div>
           </form>
