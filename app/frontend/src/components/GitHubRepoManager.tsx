@@ -373,7 +373,7 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
       })
       fd.append('relative_paths', JSON.stringify(relativePaths))
 
-      const apiBase = ((import.meta as any).env?.VITE_API_URL || '').replace(/\/$/, '')
+      const apiBase = (typeof window !== 'undefined' ? (localStorage.getItem('pgm_backend_url') || '') : '') || ((import.meta as any).env?.VITE_API_URL || '').replace(/\/$/, '')
       const r = await fetch(`${apiBase}/api/repositories/${encodeURIComponent(selectedRepo)}/upload`, {
         method: 'POST',
         credentials: 'include',

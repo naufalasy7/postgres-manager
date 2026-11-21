@@ -30,7 +30,10 @@ import {
   ShieldCheck,
   Lock,
   User,
-  Folder
+  Folder,
+  Eye,
+  EyeOff,
+  Server
 } from 'lucide-react'
 import GitHubRepoManager from './components/GitHubRepoManager'
 
@@ -42,7 +45,13 @@ export interface AuthUser {
   is_super_admin: boolean
 }
 
-const API_BASE = ((import.meta as any).env?.VITE_API_URL || '').replace(/\/$/, '')
+export const getApiBase = (): string => {
+  if (typeof window !== 'undefined') {
+    const custom = localStorage.getItem('pgm_backend_url')
+    if (custom) return custom.trim().replace(/\/$/, '')
+  }
+  return (((import.meta as any).env?.VITE_API_URL || '') as string).trim().replace(/\/$/, '')
+}
 
 const xsrf = () =>
   decodeURIComponent(
@@ -53,17 +62,61 @@ const xsrf = () =>
   )
 
 async function api<T = any>(path: string, method = 'GET', body?: unknown): Promise<T> {
-  const r = await fetch(API_BASE + '/api' + path, {
-    method,
-    credentials: 'include',
-    body: body ? JSON.stringify(body) : undefined,
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      'X-XSRF-TOKEN': xsrf()
+  const base = getApiBase()
+  const targetUrl = base + '/api' + path
+
+  let r: Response
+  try {
+    r = await fetch(targetUrl, {
+      method,
+      credentials: 'include',
+      body: body ? JSON.stringify(body) : undefined,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-XSRF-TOKEN': xsrf()
+      }
+    })
+  } catch (netErr: any) {
+    const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:'
+    const isTargetHttp = base.startsWith('http://')
+    if (isHttps && isTargetHttp) {
+      throw {
+        message:
+          'Browser memblokir koneksi Mixed Content (Halaman Vercel HTTPS tidak boleh memanggil backend HTTP secara langsung). Solusi: gunakan domain HTTPS untuk backend Anda (via Cloudflare Tunnel, ngrok HTTPS, atau Nginx SSL), atau arahkan proxy Vercel.'
+      }
     }
-  })
-  if (!r.ok) throw await r.json().catch(() => ({ message: r.statusText }))
+    throw {
+      message:
+        `Gagal terhubung ke server backend di ${base || 'origin ini'}. Pastikan backend aktif dan URL dapat diakses. (${netErr.message || 'Network error'})`
+    }
+  }
+
+  if (!r.ok) {
+    const contentType = r.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      const errJson = await r.json().catch(() => null)
+      if (errJson && errJson.message) {
+        throw errJson
+      }
+    }
+    if (r.status === 404) {
+      throw {
+        message: `Endpoint API tidak ditemukan (404) di ${targetUrl}. Pastikan URL server backend sudah benar.`
+      }
+    }
+    if (r.status === 419) {
+      throw { message: 'Sesi kedaluwarsa atau token CSRF tidak valid. Silakan coba lagi.' }
+    }
+    if (r.status === 422) {
+      throw { message: 'Kredensial salah (email atau password tidak cocok).' }
+    }
+    if (r.status === 403) {
+      throw { message: 'Akses ditolak (403 Forbidden).' }
+    }
+    throw { message: `Permintaan gagal dengan status HTTP ${r.status} (${r.statusText || 'Error'})` }
+  }
+
   return (r.status === 204 ? null : await r.json()) as T
 }
 
@@ -83,39 +136,188 @@ const btn =
 
 function Login({ onOk }: { onOk: () => void }) {
   const [err, setErr] = useState('')
+  const [showPw, setShowPw] = useState(false)
+  const [showConfig, setShowConfig] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const isVercel = window.location.hostname.includes('vercel.app')
+      const hasConfig = !!localStorage.getItem('pgm_backend_url') || !!((import.meta as any).env?.VITE_API_URL)
+      return isVercel && !hasConfig
+    }
+    return false
+  })
+  const [backendUrl, setBackendUrl] = useState(() => getApiBase())
+  const [pingStatus, setPingStatus] = useState<string | null>(null)
+  const [pingBusy, setPingBusy] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+
+  const handleTestConnection = async () => {
+    setPingBusy(true)
+    setPingStatus(null)
+    const target = backendUrl.trim().replace(/\/$/, '')
+    try {
+      const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:'
+      if (isHttps && target.startsWith('http://')) {
+        setPingStatus('⚠️ Peringatan: Halaman Vercel berjalan di HTTPS, sedangkan backend menggunakan HTTP. Browser akan memblokir request (Mixed Content). Gunakan HTTPS untuk backend Anda (misal via Cloudflare Tunnel atau ngrok HTTPS).')
+        return
+      }
+      const res = await fetch((target ? target : '') + '/api/ping', {
+        headers: { Accept: 'application/json' }
+      }).catch(async () => {
+        return await fetch((target ? target : '') + '/api/csrf')
+      })
+      if (res.ok) {
+        setPingStatus('✅ Berhasil terhubung ke server backend!')
+      } else {
+        setPingStatus(`⚠️ Server merespon dengan HTTP ${res.status} (${res.statusText})`)
+      }
+    } catch (e: any) {
+      setPingStatus(`❌ Gagal terhubung: ${e.message || 'Network error'}`)
+    } finally {
+      setPingBusy(false)
+    }
+  }
+
+  const handleSaveBackendUrl = (val: string) => {
+    setBackendUrl(val)
+    if (typeof window !== 'undefined') {
+      if (val.trim()) {
+        localStorage.setItem('pgm_backend_url', val.trim())
+      } else {
+        localStorage.removeItem('pgm_backend_url')
+      }
+    }
+  }
+
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    setSubmitting(true)
+    setErr('')
     const f = new FormData(e.currentTarget)
     try {
       await api('/login', 'POST', { email: f.get('email'), password: f.get('password') })
       onOk()
     } catch (x: any) {
-      setErr(x.message)
+      setErr(x.message || 'Login gagal.')
+    } finally {
+      setSubmitting(false)
     }
   }
+
   return (
-    <div className="grid min-h-screen place-items-center bg-slate-950">
-      <form onSubmit={submit} className={card + ' w-84 space-y-4 shadow-2xl'}>
+    <div className="grid min-h-screen place-items-center bg-slate-950 p-4">
+      <div className={card + ' w-full max-w-sm space-y-4 shadow-2xl'}>
         <div>
           <h1 className="text-xl font-bold text-white tracking-wide">POSTGRES MANAGER</h1>
           <p className="text-xs text-slate-400 mt-0.5">Centralized Database & Repository Hub</p>
         </div>
-        <div className="space-y-2">
-          <input
-            name="email"
-            type="email"
-            placeholder="Email"
-            className={inp}
-            defaultValue="nnaufalasyam7@gmail.com"
-            required
-          />
-          <input name="password" type="password" placeholder="Password" className={inp} required />
-        </div>
-        {err && (
-          <p className="text-sm text-red-400 bg-red-950/40 p-2 rounded border border-red-900">{err}</p>
+
+        {typeof window !== 'undefined' && window.location.hostname.includes('vercel.app') && !getApiBase() && (
+          <div className="p-2.5 bg-amber-950/60 border border-amber-800 rounded-lg text-[11px] text-amber-300">
+            💡 <strong>Mode Vercel:</strong> Backend belum terhubung. Buka <em>"Pengaturan Server Backend"</em> di bawah untuk memasukkan URL backend server Anda.
+          </div>
         )}
-        <button className={btn + ' w-full'}>Masuk</button>
-      </form>
+
+        <form onSubmit={submit} className="space-y-3">
+          <div className="space-y-2">
+            <div>
+              <label className="block text-[11px] font-medium text-slate-400 mb-1">Email</label>
+              <input
+                name="email"
+                type="email"
+                placeholder="Email"
+                className={inp}
+                defaultValue="nnaufalasyam7@gmail.com"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-slate-400 mb-1">Password</label>
+              <div className="relative">
+                <input
+                  name="password"
+                  type={showPw ? 'text' : 'password'}
+                  placeholder="Password"
+                  className={inp + ' pr-9'}
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPw(!showPw)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                  tabIndex={-1}
+                >
+                  {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {err && (
+            <p className="text-xs text-red-300 bg-red-950/60 p-2.5 rounded border border-red-900 leading-relaxed">
+              {err}
+            </p>
+          )}
+
+          <button disabled={submitting} className={btn + ' w-full'}>
+            {submitting ? 'Memproses Masuk...' : 'Masuk'}
+          </button>
+        </form>
+
+        {/* Collapsible Backend Server URL Configuration */}
+        <div className="pt-2 border-t border-slate-800/80">
+          <button
+            type="button"
+            onClick={() => setShowConfig(!showConfig)}
+            className="flex items-center justify-between w-full text-left text-xs text-slate-400 hover:text-slate-200 transition"
+          >
+            <span className="flex items-center gap-1.5">
+              <Server className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Pengaturan Server Backend</span>
+            </span>
+            <span className="text-[10px] text-slate-500 font-mono">
+              {showConfig ? '▲ Tutup' : '▼ Atur URL'}
+            </span>
+          </button>
+
+          {showConfig && (
+            <div className="mt-3 p-3 bg-slate-950 rounded-lg border border-slate-800 space-y-2.5 text-xs">
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1">
+                  URL Backend Server (API)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Contoh: http://10.219.1.244:8081 atau https://api.domain.com"
+                  value={backendUrl}
+                  onChange={e => handleSaveBackendUrl(e.target.value)}
+                  className={inp + ' text-xs'}
+                />
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Tersimpan otomatis di browser lokal (localStorage). Kosongkan jika backend berada di host yang sama.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={pingBusy}
+                  className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700"
+                >
+                  {pingBusy ? 'Menguji...' : 'Uji Koneksi Server'}
+                </button>
+              </div>
+
+              {pingStatus && (
+                <p className="text-[11px] p-2 rounded bg-slate-900 border border-slate-800 leading-normal">
+                  {pingStatus}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
