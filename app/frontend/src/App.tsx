@@ -34,9 +34,12 @@ import {
   Eye,
   EyeOff,
   Server,
-  Pencil
+  Pencil,
+  Table2
 } from 'lucide-react'
 import GitHubRepoManager from './components/GitHubRepoManager'
+import PlatformIntegrations from './components/PlatformIntegrations'
+import DatabaseExplorer from './components/DatabaseExplorer'
 
 export interface AuthUser {
   id: number
@@ -362,10 +365,12 @@ function Table({ title, rows, cols }: { title: string; rows: any[]; cols: string
 // =========================================================================
 function Dashboard({
   targetProjectId,
-  onNavigateTab
+  onNavigateTab,
+  onOpenExplorer
 }: {
   targetProjectId?: string | null
   onNavigateTab: (tab: string, repo?: string) => void
+  onOpenExplorer?: (projectId: number) => void
 }) {
   const [d, setD] = useState<any>(null)
   const [selectedProjectId, setSelectedProjectId] = useState<string>(targetProjectId || 'all')
@@ -569,10 +574,28 @@ function Dashboard({
             </div>
 
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => onOpenExplorer?.(d.project.id)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-cyan-950/60 hover:bg-cyan-900 border border-cyan-800 text-xs text-cyan-300 font-medium transition"
+                title="Generate & edit tabel database proyek ini"
+              >
+                <Table2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Kelola Tabel DB</span>
+              </button>
+
+              <button
+                onClick={() => onNavigateTab('iot')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-purple-950/60 hover:bg-purple-900 border border-purple-800 text-xs text-purple-300 font-medium transition"
+                title="Hubungkan ke Blynk, Zenoh, atau MQTT"
+              >
+                <Radio className="w-3.5 h-3.5 text-purple-400" />
+                <span>Konektor IoT</span>
+              </button>
+
               {d.project.repository && (
                 <button
                   onClick={() => onNavigateTab('repos', d.project.repository)}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs text-slate-200"
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 transition"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   <span>Buka Repo</span>
@@ -1465,11 +1488,15 @@ function Dashboard({
 function Projects({
   currentUser,
   onSelectProjectForDashboard,
-  onOpenRepo
+  onOpenRepo,
+  onOpenIot,
+  onOpenExplorer
 }: {
   currentUser?: AuthUser | null
   onSelectProjectForDashboard: (id: number) => void
   onOpenRepo: (repo: string) => void
+  onOpenIot?: (id: number) => void
+  onOpenExplorer?: (id: number) => void
 }) {
   const [rows, setRows] = useState<any[]>([])
   const [openWizard, setOpenWizard] = useState(false)
@@ -1616,9 +1643,11 @@ function Projects({
           value={q}
           onChange={e => setQ(e.target.value)}
         />
-        <button className={btn} onClick={() => setOpenWizard(true)}>
-          + Buat Proyek Baru
-        </button>
+        {currentUser?.role !== 'user' && (
+          <button className={btn} onClick={() => setOpenWizard(true)}>
+            + Buat Proyek Baru
+          </button>
+        )}
       </div>
 
       {/* Projects Table */}
@@ -1708,6 +1737,15 @@ function Projects({
                         Pantau DB
                       </button>
 
+                      <button
+                        onClick={() => onOpenExplorer?.(r.id)}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-cyan-300 font-medium border border-slate-700"
+                        title="Kelola tabel & isi database proyek ini"
+                      >
+                        <Table2 className="w-3 h-3 text-cyan-400" />
+                        <span>Tabel DB</span>
+                      </button>
+
                       {r.can_edit ? (
                         <>
                           <button
@@ -1717,6 +1755,15 @@ function Projects({
                           >
                             <Rocket className="w-3 h-3 text-emerald-400" />
                             <span>Deploy</span>
+                          </button>
+
+                          <button
+                            onClick={() => onOpenIot?.(r.id)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-purple-300 font-medium border border-slate-700"
+                            title="Hubungkan database ini ke Blynk, Zenoh, atau MQTT"
+                          >
+                            <Radio className="w-3 h-3 text-purple-400" />
+                            <span>IoT</span>
                           </button>
 
                           {r.repository && (
@@ -1735,6 +1782,35 @@ function Projects({
                             title="Ubah Repository"
                           >
                             Repo
+                          </button>
+                        </>
+                      ) : r.is_operator ? (
+                        <>
+                          <button
+                            onClick={() => openDeployModal(r)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-amber-300 font-medium border border-slate-700"
+                            title="Pantau Status & Log Background Service"
+                          >
+                            <Rocket className="w-3 h-3 text-amber-400" />
+                            <span>Status Service</span>
+                          </button>
+
+                          <button
+                            onClick={() => onOpenIot?.(r.id)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-purple-300 font-medium border border-slate-700"
+                            title="Pantau telemetri IoT Blynk, Zenoh, atau MQTT"
+                          >
+                            <Radio className="w-3 h-3 text-purple-400" />
+                            <span>IoT</span>
+                          </button>
+
+                          <button
+                            onClick={() => onOpenExplorer?.(r.id)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-cyan-300 font-medium border border-slate-700"
+                            title="Lihat tabel & unduh data database proyek (mode baca saja)"
+                          >
+                            <Table2 className="w-3 h-3 text-cyan-400" />
+                            <span>Tabel DB</span>
                           </button>
                         </>
                       ) : (
@@ -1779,6 +1855,17 @@ function Projects({
                   </option>
                 ))}
               </select>
+
+              {linkRepoModal.repo && (
+                <div className="mt-2 rounded border border-emerald-900/60 bg-emerald-950/40 p-2.5 text-[11px] text-emerald-300 space-y-0.5">
+                  <div className="font-semibold text-emerald-300 flex items-center gap-1">
+                    <span>✨ Auto-Sync .env Aktif</span>
+                  </div>
+                  <p className="text-slate-300">
+                    Kredensial database & <code className="font-mono text-cyan-300">DATABASE_URL</code> akan otomatis disinkronkan ke file <code className="font-mono text-emerald-400">.env</code> di repository <span className="font-mono font-bold text-white">{linkRepoModal.repo}</span>.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
               <button
@@ -1905,7 +1992,12 @@ function Projects({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {deployModal.data.deploy_status === 'running' ? (
+                    {currentUser?.role === 'user' ? (
+                      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-amber-400 font-medium">
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Mode Monitoring Operator</span>
+                      </div>
+                    ) : deployModal.data.deploy_status === 'running' ? (
                       <>
                         <button
                           disabled={deployLoading}
@@ -2016,20 +2108,22 @@ function Projects({
                             </div>
                             <p className="text-[11px] text-slate-400 truncate">{cfg.description}</p>
                           </div>
-                          <button
-                            disabled={deployLoading}
-                            onClick={() =>
-                              triggerDeployInModal(deployModal.project.id, {
-                                deploy_type: cfg.id,
-                                deploy_command: cfg.command,
-                                deploy_dir: cfg.dir
-                              })
-                            }
-                            className="shrink-0 flex items-center gap-1 px-3 py-1.5 rounded bg-slate-800 hover:bg-emerald-950 border border-slate-700 hover:border-emerald-700 text-xs text-emerald-300 font-semibold"
-                          >
-                            <Play className="w-3 h-3 fill-current" />
-                            <span>Deploy Profil Ini</span>
-                          </button>
+                          {currentUser?.role !== 'user' && (
+                            <button
+                              disabled={deployLoading}
+                              onClick={() =>
+                                triggerDeployInModal(deployModal.project.id, {
+                                  deploy_type: cfg.id,
+                                  deploy_command: cfg.command,
+                                  deploy_dir: cfg.dir
+                                })
+                              }
+                              className="shrink-0 flex items-center gap-1 px-3 py-1.5 rounded bg-slate-800 hover:bg-emerald-950 border border-slate-700 hover:border-emerald-700 text-xs text-emerald-300 font-semibold"
+                            >
+                              <Play className="w-3 h-3 fill-current" />
+                              <span>Deploy Profil Ini</span>
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -2101,6 +2195,8 @@ function Wizard({ repos, onClose }: { repos: any[]; onClose: () => void }) {
   const [selectedRepo, setSelectedRepo] = useState('')
   const [repoScripts, setRepoScripts] = useState<any[]>([])
   const [selectedScript, setSelectedScript] = useState('')
+  const [schemaPreview, setSchemaPreview] = useState<any | null>(null)
+  const [autoSchema, setAutoSchema] = useState(true)
 
   useEffect(() => {
     api('/templates').then(setTpls)
@@ -2108,15 +2204,18 @@ function Wizard({ repos, onClose }: { repos: any[]; onClose: () => void }) {
 
   useEffect(() => {
     if (selectedRepo) {
-      api(`/repositories/${encodeURIComponent(selectedRepo)}/sql-scripts`)
-        .then(list => {
-          setRepoScripts(list)
-          if (list.length > 0) setSelectedScript(list[0].path)
-        })
-        .catch(() => setRepoScripts([]))
+      Promise.all([
+        api<any[]>(`/repositories/${encodeURIComponent(selectedRepo)}/sql-scripts`).catch(() => []),
+        api<any>(`/repositories/${encodeURIComponent(selectedRepo)}/schema-preview`).catch(() => null),
+      ]).then(([list, preview]) => {
+        setRepoScripts(list || [])
+        setSchemaPreview(preview)
+        setSelectedScript('')
+      })
     } else {
       setRepoScripts([])
       setSelectedScript('')
+      setSchemaPreview(null)
     }
   }, [selectedRepo])
 
@@ -2131,7 +2230,8 @@ function Wizard({ repos, onClose }: { repos: any[]; onClose: () => void }) {
           ...f,
           template_id: +(f.template_id as string),
           repository: selectedRepo || null,
-          init_sql_path: selectedScript || null
+          init_sql_path: selectedScript || null,
+          auto_schema: selectedScript ? false : autoSchema
         })
       )
     } catch (x: any) {
@@ -2149,6 +2249,26 @@ function Wizard({ repos, onClose }: { repos: any[]; onClose: () => void }) {
             <h2 className="font-semibold text-emerald-400">Proyek dibuat</h2>
             <p className="text-amber-400 text-xs">Simpan password ini sekarang — tidak akan ditampilkan lagi.</p>
             <pre className="rounded bg-slate-950 p-3 text-xs font-mono">{`host: ${res.host}:${res.port}\ndb: ${res.db_name}\nuser: ${res.db_user}\npassword: ${res.password}`}</pre>
+            {res.database_url && (
+              <div className="space-y-1">
+                <p className="text-[11px] text-slate-400 font-semibold">DATABASE_URL (Prisma / ORM / FastAPI):</p>
+                <pre className="rounded bg-slate-950 p-2 text-[10px] font-mono text-cyan-300 break-all select-all">{res.database_url}</pre>
+              </div>
+            )}
+            {res.schema?.tables?.length > 0 && (
+              <div className="rounded border border-cyan-900/60 bg-cyan-950/30 p-2.5 text-xs text-cyan-300 space-y-1">
+                <p className="font-semibold">Skema program otomatis dibuat ({res.schema.tables.length} tabel):</p>
+                <p className="font-mono text-[11px] text-cyan-200 break-all">{res.schema.tables.join(', ')}</p>
+              </div>
+            )}
+            {res.schema?.warnings?.length > 0 && (
+              <div className="rounded border border-amber-900/60 bg-amber-950/30 p-2.5 text-[11px] text-amber-300 space-y-1">
+                <p className="font-semibold">Peringatan skema:</p>
+                {res.schema.warnings.map((w: string) => (
+                  <p key={w} className="font-mono break-all">{w}</p>
+                ))}
+              </div>
+            )}
             <ul className="list-disc pl-5 text-slate-400 text-xs">
               {res.steps.map((s: string) => (
                 <li key={s}>{s}</li>
@@ -2204,17 +2324,62 @@ function Wizard({ repos, onClose }: { repos: any[]; onClose: () => void }) {
                 ))}
               </select>
 
+              {selectedRepo && (
+                <div className="mt-2 rounded border border-emerald-900/60 bg-emerald-950/40 p-2.5 text-[11px] text-emerald-300 space-y-0.5">
+                  <div className="font-semibold text-emerald-300 flex items-center gap-1">
+                    <span>✨ Auto-Sync .env Aktif</span>
+                  </div>
+                  <p className="text-slate-300">
+                    File <code className="font-mono text-emerald-400">.env</code> (lengkap dengan password & <code className="font-mono text-cyan-300">DATABASE_URL</code> untuk Prisma/Sequelize/TypeORM/Alembic/FastAPI) akan otomatis terbuat di folder repositori <span className="font-mono font-bold text-white">{selectedRepo}</span>.
+                  </p>
+                </div>
+              )}
+
+              {selectedRepo && schemaPreview?.has_schema && (
+                <div className="mt-2 rounded border border-cyan-900/60 bg-cyan-950/40 p-2.5 text-[11px] text-cyan-200 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-semibold text-cyan-300 flex items-center gap-1">
+                      <span>🧬 Skema Program Terdeteksi Otomatis</span>
+                    </div>
+                    <label className="flex items-center gap-1.5 text-[11px] text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={autoSchema && !selectedScript}
+                        disabled={!!selectedScript}
+                        onChange={e => setAutoSchema(e.target.checked)}
+                        className="accent-cyan-500"
+                      />
+                      <span>Terapkan</span>
+                    </label>
+                  </div>
+                  <p className="text-slate-300">
+                    {schemaPreview.tables.length} tabel langsung dibuat:{' '}
+                    <span className="font-mono text-cyan-300">{schemaPreview.tables.join(', ')}</span>
+                  </p>
+                  <ul className="space-y-0.5 text-[10px] text-slate-400 font-mono max-h-24 overflow-auto">
+                    {schemaPreview.sources.map((s: any) => (
+                      <li key={s.path}>
+                        • {s.path} <span className="text-slate-500">({s.kind})</span>
+                      </li>
+                    ))}
+                  </ul>
+                  {selectedScript && (
+                    <p className="text-[10px] text-amber-400">Mode manual: hanya file SQL yang dipilih yang dijalankan.</p>
+                  )}
+                </div>
+              )}
+
               {selectedRepo && repoScripts.length > 0 && (
                 <div>
                   <label className="block text-[11px] text-slate-400 mb-1">
-                    Inisialisasi Skrip dari Repo ke Database:
+                    Override: Jalankan Satu File SQL Saja (Opsional):
                   </label>
                   <select
                     value={selectedScript}
                     onChange={e => setSelectedScript(e.target.value)}
                     className={inp + ' text-xs font-mono'}
                   >
-                    <option value="">(Jangan jalankan skrip awal)</option>
+                    <option value="">— Mode otomatis (deteksi semua sumber skema) —</option>
                     {repoScripts.map(s => (
                       <option key={s.path} value={s.path}>
                         {s.path}
@@ -2372,24 +2537,34 @@ function UserManager({ api }: { api: <T = any>(path: string, method?: string, bo
       )}
 
       {/* Role explanation cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="rounded-xl border border-amber-900/50 bg-amber-950/20 p-4">
           <div className="flex items-center gap-2 text-amber-400 font-bold text-sm mb-1">
             <ShieldCheck className="w-4 h-4" />
-            <span>Role 1: Super Admin (nnaufalasyam7@gmail.com)</span>
+            <span>Role 1: Super Admin</span>
           </div>
-          <p className="text-xs text-slate-300">
-            Akses penuh tak terbatas: melihat & mengedit seluruh proyek dan repository, akses melihat riwayat lengkap database (Audit Log global), dan hak khusus mendaftarkan pengguna baru.
+          <p className="text-xs text-slate-300 leading-relaxed">
+            Akses mutlak & tak terbatas: kelola semua database, repositori pribadi/publik, eksekusi skrip, audit log global, dan kelola seluruh akun pengguna.
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-blue-900/50 bg-blue-950/20 p-4">
+          <div className="flex items-center gap-2 text-blue-400 font-bold text-sm mb-1">
+            <ShieldCheck className="w-4 h-4" />
+            <span>Role 2: Admin Terbatas</span>
+          </div>
+          <p className="text-xs text-slate-300 leading-relaxed">
+            Workspace mandiri (<code className="text-blue-300 font-mono">projects/[user]/</code>): bebas buat database, repo Git mandiri, edit kode, deploy service, dan buat backup. <strong>Terkunci total dari database & repo Super Admin.</strong>
           </p>
         </div>
 
         <div className="rounded-xl border border-emerald-900/50 bg-emerald-950/20 p-4">
           <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm mb-1">
             <UserCheck className="w-4 h-4" />
-            <span>Role 2: User / Operator Terbatas</span>
+            <span>Role 3: User / Operator</span>
           </div>
-          <p className="text-xs text-slate-300">
-            Subfolder workspace terisolasi (diawali kosongan). Fitur terkunci untuk mengedit bagiannya sendiri. Dapat melihat (view) proyek role lain tanpa hak edit, serta akses riwayat database global terkunci.
+          <p className="text-xs text-slate-300 leading-relaxed">
+            Mode operasional & pemantauan (Read-Only): pantau metrik DB, cek log deployment, unduh backup. <strong>Tidak bisa</strong> buat/hapus DB, edit repo, atau deploy service. <strong>Terkunci total dari Super Admin.</strong>
           </p>
         </div>
       </div>
@@ -2537,8 +2712,8 @@ function UserManager({ api }: { api: <T = any>(path: string, method?: string, bo
               <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1">Role & Hak Akses</label>
                 <select name="role" defaultValue="user" className={inp}>
-                  <option value="user">User / Operator (Akses Terkunci ke Bagian Sendiri)</option>
-                  <option value="admin">Admin Terbatas (Akses Operasional Proyek Mandiri)</option>
+                  <option value="user">User / Operator (Hanya Pemantauan, Read-Only Git, Tanpa Akses Super Admin)</option>
+                  <option value="admin">Admin Terbatas (Akses Mandiri DB, Git & Deploy di Workspace Sendiri)</option>
                 </select>
               </div>
 
@@ -2641,8 +2816,8 @@ function UserManager({ api }: { api: <T = any>(path: string, method?: string, bo
                   </div>
                 ) : (
                   <select name="role" defaultValue={editModalUser.role} className={inp}>
-                    <option value="user">User / Operator Terbatas (Hanya subfolder proyek sendiri)</option>
-                    <option value="admin">Admin Terbatas (Akses Operasional Proyek Mandiri)</option>
+                    <option value="user">User / Operator (Hanya Pemantauan, Read-Only Git, Tanpa Akses Super Admin)</option>
+                    <option value="admin">Admin Terbatas (Akses Mandiri DB, Git & Deploy di Workspace Sendiri)</option>
                     <option value="super_admin">Super Admin (Akses Penuh Seluruh Proyek & Pengguna)</option>
                   </select>
                 )}
@@ -2679,6 +2854,8 @@ export default function App() {
   const [audit, setAudit] = useState<any[]>([])
   const [dashboardTargetProjectId, setDashboardTargetProjectId] = useState<string | null>(null)
   const [targetRepoName, setTargetRepoName] = useState<string | null>(null)
+  const [targetIotProjectId, setTargetIotProjectId] = useState<number | null>(null)
+  const [targetExplorerProjectId, setTargetExplorerProjectId] = useState<number | null>(null)
 
   const boot = () =>
     api('/csrf')
@@ -2707,7 +2884,10 @@ export default function App() {
 
   const navItem = (k: string, label: string, icon: React.ReactNode) => (
     <button
-      onClick={() => setTab(k)}
+      onClick={() => {
+        if (k === 'db') setTargetExplorerProjectId(null)
+        setTab(k)
+      }}
       className={`flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
         tab === k
           ? 'bg-slate-800 text-emerald-400 border border-slate-700/80 shadow-sm'
@@ -2729,6 +2909,16 @@ export default function App() {
     setTab('repos')
   }
 
+  const handleOpenIotFromProject = (projId: number) => {
+    setTargetIotProjectId(projId)
+    setTab('iot')
+  }
+
+  const handleOpenExplorerFromProject = (projId: number) => {
+    setTargetExplorerProjectId(projId)
+    setTab('db')
+  }
+
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
       <aside className="w-60 shrink-0 flex flex-col justify-between border-r border-slate-800/80 bg-slate-950 p-4">
@@ -2741,6 +2931,8 @@ export default function App() {
             {navItem('repos', 'Repositories', <BookOpen className="w-4 h-4" />)}
             {navItem('dash', 'Dashboard', <LayoutDashboard className="w-4 h-4" />)}
             {navItem('proj', 'Proyek DB', <Database className="w-4 h-4" />)}
+            {navItem('db', 'Tabel Database', <Table2 className="w-4 h-4" />)}
+            {navItem('iot', 'Platform & IoT', <Radio className="w-4 h-4" />)}
             {user.is_super_admin && navItem('audit', 'Audit Log', <ScrollText className="w-4 h-4" />)}
             {user.is_super_admin && navItem('users', 'Kelola Pengguna', <Users className="w-4 h-4" />)}
           </nav>
@@ -2754,6 +2946,11 @@ export default function App() {
                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40">
                   <ShieldCheck className="w-2.5 h-2.5" />
                   SUPER ADMIN
+                </span>
+              ) : user.role === 'admin' ? (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wider uppercase bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                  <ShieldCheck className="w-2.5 h-2.5" />
+                  ADMIN TERBATAS
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wider uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
@@ -2787,11 +2984,14 @@ export default function App() {
           <GitHubRepoManager
             api={api}
             xsrf={xsrf}
+            currentUser={user}
             initialRepo={targetRepoName}
             onOpenProjectDashboard={projId => {
               setDashboardTargetProjectId(String(projId))
               setTab('dash')
             }}
+            onOpenDatabaseExplorer={handleOpenExplorerFromProject}
+            onOpenPlatformIntegrations={handleOpenIotFromProject}
           />
         )}
         {tab === 'dash' && (
@@ -2801,6 +3001,7 @@ export default function App() {
               if (repo) setTargetRepoName(repo)
               setTab(targetTab)
             }}
+            onOpenExplorer={handleOpenExplorerFromProject}
           />
         )}
         {tab === 'proj' && (
@@ -2808,6 +3009,25 @@ export default function App() {
             currentUser={user}
             onSelectProjectForDashboard={handleSelectProjectForDashboard}
             onOpenRepo={handleOpenRepoFromProject}
+            onOpenIot={handleOpenIotFromProject}
+            onOpenExplorer={handleOpenExplorerFromProject}
+          />
+        )}
+        {tab === 'db' && (
+          <DatabaseExplorer
+            key={targetExplorerProjectId ?? 'auto'}
+            api={api}
+            currentUser={user}
+            initialProjectId={targetExplorerProjectId}
+          />
+        )}
+        {tab === 'iot' && (
+          <PlatformIntegrations
+            api={api}
+            xsrf={xsrf}
+            currentUser={user}
+            initialProjectId={targetIotProjectId}
+            onOpenDatabaseExplorer={handleOpenExplorerFromProject}
           />
         )}
         {tab === 'audit' && user.is_super_admin && (

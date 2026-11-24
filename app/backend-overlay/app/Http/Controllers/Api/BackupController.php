@@ -6,13 +6,23 @@ use Illuminate\Support\Facades\{DB, Crypt};
 use Symfony\Component\Process\Process;
 
 class BackupController extends Controller {
-    public function index(int $id) { return DB::table('database_backups')->where('project_id', $id)->orderByDesc('id')->get(); }
+    public function index(int $id) {
+        $user = auth()->user();
+        $p = DB::table('projects')->find($id) ?? abort(404, 'Proyek tidak ditemukan.');
+        if (!$user->isSuperAdmin() && $p->created_by != $user->id) {
+            abort(403, 'Akses ditolak: Proyek bukan milik Anda.');
+        }
+        return DB::table('database_backups')->where('project_id', $id)->orderByDesc('id')->get();
+    }
 
     public function store(int $id) {
         $user = auth()->user();
-        $p = DB::table('projects')->find($id) ?? abort(404);
+        $p = DB::table('projects')->find($id) ?? abort(404, 'Proyek tidak ditemukan.');
         if (!$user->isSuperAdmin() && $p->created_by != $user->id) {
             abort(403, 'Akses ditolak: Hanya pemilik proyek atau Super Admin yang dapat membuat backup.');
+        }
+        if ($user->role === 'user') {
+            abort(403, 'Akses ditolak: Role Operator tidak diizinkan membuat backup manual. Fitur ini hanya untuk Admin Terbatas dan Super Admin.');
         }
 
         $c = DB::table('database_connections')->where('project_id', $id)->first();
@@ -32,9 +42,14 @@ class BackupController extends Controller {
     }
 
     public function download(int $id) {
-        $b = DB::table('database_backups')->find($id) ?? abort(404);
-        $root = realpath(config('pgmanager.root').'/projects'); $path = realpath($b->file_path);
-        abort_unless($path && $root && str_starts_with($path, $root.DIRECTORY_SEPARATOR), 403);
+        $b = DB::table('database_backups')->find($id) ?? abort(404, 'Data backup tidak ditemukan.');
+        $user = auth()->user();
+        $project = DB::table('projects')->find($b->project_id);
+        if (!$user->isSuperAdmin() && (!$project || $project->created_by != $user->id)) {
+            abort(403, 'Akses ditolak: Anda tidak memiliki izin mengunduh backup proyek ini.');
+        }
+        $root = realpath((config('pgmanager.root') ?: base_path('../../')).'/projects'); $path = realpath($b->file_path);
+        abort_unless($path && $root && str_starts_with($path, $root.DIRECTORY_SEPARATOR), 403, 'Akses file backup tidak sah.');
         Audit::log('backup.download', (string)$id);
         return response()->download($path);
     }

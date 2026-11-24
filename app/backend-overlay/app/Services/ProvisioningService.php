@@ -37,15 +37,68 @@ class ProvisioningService {
             if ($tpl && trim($tpl->sql_init ?? '') !== '') { $this->admin($db, $user, $pass)->exec($tpl->sql_init); $steps[] = "template '{$tpl->name}' diinisialisasi"; }
 
             // Inisialisasi skrip SQL dari repository terhubung bila dipilih
+            $schemaReport = ['applied' => [], 'tables' => [], 'warnings' => [], 'sources' => []];
             if (!empty($d['repository']) && !empty($d['init_sql_path'])) {
                 $root = config('pgmanager.root') ?: base_path('../../');
-                $sqlFile = rtrim($root, '/') . '/repositories/' . trim($d['repository'], '/') . '/' . trim($d['init_sql_path'], '/');
-                if (file_exists($sqlFile)) {
+                $sqlPath = trim($d['init_sql_path'], '/');
+                $repoName = trim($d['repository'], '/');
+                $repoValid = $repoName !== ''
+                    && !str_contains($repoName, '..')
+                    && (bool)preg_match('/^[A-Za-z0-9_.\-]+$/', $repoName);
+                $sqlFile = $repoValid
+                    ? rtrim($root, '/') . '/repositories/' . $repoName . '/' . $sqlPath
+                    : null;
+                if (str_contains($sqlPath, '..') || !is_file((string)$sqlFile)) {
+                    $sqlFile = null;
+                }
+                if ($sqlFile && file_exists($sqlFile)) {
                     $repoSql = file_get_contents($sqlFile);
                     if ($repoSql) {
                         $this->admin($db, $user, $pass)->exec($repoSql);
                         $steps[] = "skrip '{$d['init_sql_path']}' dari repo '{$d['repository']}' dieksekusi";
+                        $inspector = new RepoSchemaInspector();
+                        $schemaReport['applied'][] = $d['init_sql_path'];
+                        $schemaReport['tables'] = $inspector->extractTables($repoSql);
                     }
+                }
+            } elseif (!empty($d['repository']) && !empty($d['auto_schema'])) {
+                // Auto-deteksi skema yang dibutuhkan program (file .sql, SQL inline Python/JS/PHP).
+                // Kegagalan satu sumber tidak membatalkan database; dicatat sebagai warning.
+                try {
+                    $inspector = new RepoSchemaInspector();
+                    $discovery = $inspector->discover($d['repository']);
+                    $schemaReport['sources'] = array_map(
+                        fn(array $s) => ['path' => $s['path'], 'kind' => $s['kind'], 'tables' => $s['tables']],
+                        $discovery['sources']
+                    );
+
+                    if (!empty($discovery['sources'])) {
+                        $schemaPdo = $this->admin($db, $user, $pass);
+                        foreach ($discovery['sources'] as $src) {
+                            try {
+                                $schemaPdo->exec($src['sql']);
+                                $schemaReport['applied'][] = $src['path'];
+                                foreach ($src['tables'] as $tbl) {
+                                    if (!in_array($tbl, $schemaReport['tables'], true)) {
+                                        $schemaReport['tables'][] = $tbl;
+                                    }
+                                }
+                            } catch (\Throwable $se) {
+                                $schemaReport['warnings'][] = "{$src['path']}: " . $se->getMessage();
+                            }
+                        }
+                    }
+
+                    if (!empty($schemaReport['applied'])) {
+                        $steps[] = 'skema repo otomatis: ' . implode(', ', $schemaReport['applied'])
+                            . ' (' . count($schemaReport['tables']) . ' tabel: ' . implode(', ', $schemaReport['tables']) . ')';
+                    }
+                    if (!empty($schemaReport['warnings'])) {
+                        $steps[] = 'peringatan skema: ' . implode('; ', $schemaReport['warnings']);
+                    }
+                } catch (\Throwable $se) {
+                    $schemaReport['warnings'][] = $se->getMessage();
+                    $steps[] = 'auto-skema repo gagal: ' . $se->getMessage();
                 }
             }
 
@@ -68,6 +121,24 @@ class ProvisioningService {
             file_put_contents("$dir/config/.env", $env); chmod("$dir/config/.env", 0600);
             $steps[] = 'direktori + .env (0600)';
 
+            // Auto-Sync .env langsung ke folder repository jika terhubung
+            if (!empty($d['repository'])) {
+                try {
+                    $synced = app(\App\Services\RepoEnvSyncService::class)->sync($d['repository'], [
+                        'host' => config('pgmanager.host'),
+                        'port' => config('pgmanager.port'),
+                        'db_name' => $db,
+                        'db_user' => $user,
+                        'password' => $pass,
+                    ]);
+                    if (!empty($synced)) {
+                        $steps[] = "file .env otomatis disinkronkan ke repo '{$d['repository']}' (" . implode(', ', $synced) . ")";
+                    }
+                } catch (\Throwable $se) {
+                    $steps[] = "sync .env repo: " . $se->getMessage();
+                }
+            }
+
             $pid = DB::transaction(function () use ($d, $dir, $pass) {
                 $id = DB::table('projects')->insertGetId([
                     'name' => $d['name'],
@@ -88,7 +159,18 @@ class ProvisioningService {
             });
             $steps[] = 'terdaftar di postgres_master';
             Audit::log('project.create', $slug, 'ok', ['db' => $db]);
-            return ['project_id' => $pid, 'db_name' => $db, 'db_user' => $user, 'password' => $pass, 'host' => config('pgmanager.host'), 'port' => config('pgmanager.port'), 'steps' => $steps];
+            $dbUrl = "postgresql://" . rawurlencode($user) . ":" . rawurlencode($pass) . "@" . config('pgmanager.host') . ":" . config('pgmanager.port') . "/{$db}?schema=public&sslmode=disable";
+            return [
+                'project_id' => $pid,
+                'db_name' => $db,
+                'db_user' => $user,
+                'password' => $pass,
+                'host' => config('pgmanager.host'),
+                'port' => config('pgmanager.port'),
+                'database_url' => $dbUrl,
+                'schema' => $schemaReport,
+                'steps' => $steps,
+            ];
         } catch (\Throwable $e) {
             $report = [];
             try {

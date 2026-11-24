@@ -21,7 +21,16 @@ import {
   Database,
   File as FileIcon,
   Archive,
-  Play
+  Play,
+  Lock,
+  ShieldAlert,
+  Radio,
+  Table2,
+  Link2,
+  Unlink2,
+  Sparkles,
+  RefreshCw,
+  CheckCircle2
 } from 'lucide-react'
 import { marked } from 'marked'
 
@@ -30,6 +39,15 @@ interface Props {
   xsrf: () => string
   initialRepo?: string | null
   onOpenProjectDashboard?: (projectId: number) => void
+  onOpenDatabaseExplorer?: (projectId: number) => void
+  onOpenPlatformIntegrations?: (projectId: number) => void
+  currentUser?: {
+    id: number
+    name: string
+    email: string
+    role: string
+    is_super_admin: boolean
+  } | null
 }
 
 interface RepoItem {
@@ -43,6 +61,15 @@ interface RepoItem {
     time_ago: string
     message: string
     date: string
+  } | null
+  owner?: string
+  is_owner?: boolean
+  can_edit?: boolean
+  linked_project?: {
+    id: number
+    name: string
+    slug: string
+    db_name: string
   } | null
   updated_at: string
 }
@@ -157,7 +184,7 @@ async function getFilesFromDataTransfer(dataTransfer: DataTransfer): Promise<Upl
   }
 
   const items = dataTransfer.items
-  if (items && items.length > 0 && items[0].webkitGetAsEntry) {
+  if (items && items.length > 0 && (items[0] as any).webkitGetAsEntry) {
     for (let i = 0; i < items.length; i++) {
       const entry = items[i].webkitGetAsEntry()
       if (entry) {
@@ -175,15 +202,20 @@ async function getFilesFromDataTransfer(dataTransfer: DataTransfer): Promise<Upl
   return result
 }
 
-export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjectDashboard }: Props) {
+export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjectDashboard, onOpenDatabaseExplorer, onOpenPlatformIntegrations, currentUser }: Props) {
   // Navigation & Repos
   const [repos, setRepos] = useState<RepoItem[]>([])
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [sortOption, setSortOption] = useState<'updated' | 'name' | 'commits'>('updated')
 
+  const isOperator = currentUser?.role === 'user'
+  const currentRepoObj = repos.find(r => r.name === selectedRepo)
+  const canEditRepo = currentUser?.is_super_admin || (currentRepoObj?.can_edit ?? !isOperator)
+
   // Ecosystem & Projects Integration
   const [projects, setProjects] = useState<any[]>([])
+  const linkedProject = projects.find(p => p.repository === selectedRepo)
   const [showExecModal, setShowExecModal] = useState(false)
   const [targetProjectId, setTargetProjectId] = useState<string>('')
   const [execResult, setExecResult] = useState<any>(null)
@@ -210,10 +242,25 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
   const [showNewRepoModal, setShowNewRepoModal] = useState(false)
   const [newRepoName, setNewRepoName] = useState('')
   const [newRepoDesc, setNewRepoDesc] = useState('')
+  const [showInitDbModal, setShowInitDbModal] = useState(false)
+  const [initDbTab, setInitDbTab] = useState<'create' | 'link'>('create')
+  const [initDbForm, setInitDbForm] = useState({
+    name: '',
+    slug: '',
+    db_name: '',
+    db_user: '',
+    template_id: 1,
+    init_sql_path: '',
+  })
+  const [repoSqlScripts, setRepoSqlScripts] = useState<any[]>([])
+  const [schemaPreview, setSchemaPreview] = useState<any | null>(null)
+  const [autoSchema, setAutoSchema] = useState(true)
+  const [linkProjectId, setLinkProjectId] = useState('')
   const [loading, setLoading] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+  const [successMsg, setSuccessMsg] = useState('')
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
@@ -314,6 +361,7 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    if (!canEditRepo) return
     setIsDragging(true)
   }
 
@@ -330,6 +378,11 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
 
     if (!selectedRepo) {
       setErrorMsg('Pilih repository terlebih dahulu sebelum mengunggah file/folder.')
+      return
+    }
+
+    if (!canEditRepo) {
+      setErrorMsg('Akses ditolak: Role Anda hanya memiliki izin membaca (read-only) pada repositori ini.')
       return
     }
 
@@ -483,6 +536,171 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
     }
   }
 
+  const openInitDbModal = async () => {
+    if (!selectedRepo) return
+    setErrorMsg('')
+    const cleanRepo = selectedRepo.toLowerCase().replace(/[^a-z0-9_]/g, '_')
+    const cleanSlug = selectedRepo.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+    setInitDbForm({
+      name: `${selectedRepo} Database`,
+      slug: `${cleanSlug}-db`,
+      db_name: `${cleanRepo}_db`,
+      db_user: `${cleanRepo}_user`,
+      template_id: 1,
+      init_sql_path: '',
+    })
+    setLinkProjectId('')
+    setInitDbTab('create')
+    setShowInitDbModal(true)
+    setSchemaPreview(null)
+    setAutoSchema(true)
+    try {
+      const [scripts, preview] = await Promise.all([
+        api<any[]>(`/repositories/${encodeURIComponent(selectedRepo)}/sql-scripts`).catch(() => []),
+        api<any>(`/repositories/${encodeURIComponent(selectedRepo)}/schema-preview`).catch(() => null),
+      ])
+      setRepoSqlScripts(scripts || [])
+      setSchemaPreview(preview)
+      // Default: biarkan mode otomatis (semua sumber skema dideteksi & diterapkan).
+    } catch (e) {
+      setRepoSqlScripts([])
+      setSchemaPreview(null)
+    }
+  }
+
+  const handleInitDatabase = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedRepo) return
+    try {
+      setActionBusy(true)
+      setErrorMsg('')
+      const res = await api<any>(`/repositories/${encodeURIComponent(selectedRepo)}/init-db`, 'POST', {
+        name: initDbForm.name,
+        slug: initDbForm.slug,
+        db_name: initDbForm.db_name,
+        db_user: initDbForm.db_user,
+        template_id: initDbForm.template_id || 1,
+        init_sql_path: initDbForm.init_sql_path || null,
+        auto_schema: initDbForm.init_sql_path ? false : autoSchema,
+      })
+      const [projList, repoList] = await Promise.all([
+        api<any[]>('/projects'),
+        api<RepoItem[]>('/repositories')
+      ])
+      setProjects(projList)
+      setRepos(repoList)
+      setShowInitDbModal(false)
+      const schemaTables = res?.schema?.tables || []
+      const schemaInfo = schemaTables.length
+        ? ` Skema otomatis dibuat: ${schemaTables.length} tabel (${schemaTables.join(', ')}).`
+        : ''
+      const warningInfo = res?.schema?.warnings?.length
+        ? ` Peringatan: ${res.schema.warnings.join('; ')}`
+        : ''
+      setSuccessMsg(`Database '${res.db_name}' berhasil dibuat & terhubung! File .env otomatis disinkronkan ke folder repository.${schemaInfo}${warningInfo}`)
+      setTimeout(() => setSuccessMsg(''), 9000)
+      if (treeData) {
+        loadTree(selectedRepo, currentPath).catch(() => {})
+      }
+      const targetId = res?.project_id || res?.id
+      if (targetId) {
+        onOpenDatabaseExplorer?.(Number(targetId))
+      }
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Gagal inisialisasi database untuk repository.')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  // Link this repository to an existing project database
+  const handleLinkProject = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedRepo || !linkProjectId) return
+    try {
+      setActionBusy(true)
+      setErrorMsg('')
+      const linkRes = await api<any>(`/repositories/${encodeURIComponent(selectedRepo)}/link-db`, 'POST', { project_id: Number(linkProjectId) })
+      const [projList, repoList] = await Promise.all([
+        api<any[]>('/projects'),
+        api<RepoItem[]>('/repositories')
+      ])
+      setProjects(projList)
+      setRepos(repoList)
+      setShowInitDbModal(false)
+      setSuccessMsg(linkRes?.message || `Repository '${selectedRepo}' berhasil dihubungkan! File .env otomatis disinkronkan.`)
+      setTimeout(() => setSuccessMsg(''), 7000)
+      if (treeData) {
+        loadTree(selectedRepo, currentPath).catch(() => {})
+      }
+      onOpenDatabaseExplorer?.(Number(linkProjectId))
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Gagal menghubungkan repository ke proyek database.')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const handleSyncEnv = async () => {
+    if (!selectedRepo) return
+    try {
+      setActionBusy(true)
+      setErrorMsg('')
+      setSuccessMsg('')
+      const res = await api<any>(`/repositories/${encodeURIComponent(selectedRepo)}/sync-env`, 'POST')
+      const filesStr = res?.synced_files?.length ? ` (${res.synced_files.join(', ')})` : ''
+      setSuccessMsg((res?.message || 'File .env di repository berhasil disinkronkan!') + filesStr)
+      setTimeout(() => setSuccessMsg(''), 7000)
+      await loadTree(selectedRepo, currentPath)
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Gagal menyinkronkan file .env ke repository.')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const handleApplySchema = async () => {
+    if (!selectedRepo) return
+    try {
+      setActionBusy(true)
+      setErrorMsg('')
+      setSuccessMsg('')
+      const res = await api<any>(`/repositories/${encodeURIComponent(selectedRepo)}/apply-schema`, 'POST')
+      const tables = res?.tables || []
+      const tableInfo = tables.length ? ` Tabel: ${tables.join(', ')}.` : ''
+      setSuccessMsg((res?.message || 'Skema repository berhasil diterapkan.') + tableInfo)
+      setTimeout(() => setSuccessMsg(''), 9000)
+      if (res?.warnings?.length) {
+        setErrorMsg('Peringatan: ' + res.warnings.join('; '))
+      }
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Gagal menerapkan skema repository ke database.')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const handleUnlinkProject = async () => {
+    if (!selectedRepo || !window.confirm(`Putus hubungan repository '${selectedRepo}' dari proyek database ini?`)) return
+    try {
+      setActionBusy(true)
+      setErrorMsg('')
+      await api(`/repositories/${encodeURIComponent(selectedRepo)}/unlink-db`, 'POST')
+      const [projList, repoList] = await Promise.all([
+        api<any[]>('/projects'),
+        api<RepoItem[]>('/repositories')
+      ])
+      setProjects(projList)
+      setRepos(repoList)
+      setSuccessMsg(`Hubungan database pada repository '${selectedRepo}' berhasil diputus.`)
+      setTimeout(() => setSuccessMsg(''), 5000)
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Gagal memutus hubungan database.')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
   const formatBytes = (bytes: number | null) => {
     if (bytes === null || bytes === undefined) return '-'
     if (bytes < 1024) return bytes + ' B'
@@ -512,8 +730,6 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
       return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
     })
 
-  const currentRepoObj = repos.find(r => r.name === selectedRepo)
-
   return (
     <div
       className="space-y-4"
@@ -539,11 +755,23 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
         </div>
       )}
 
-      {/* Error alert */}
+      {/* Alerts */}
       {errorMsg && (
         <div className="flex items-center justify-between p-3 rounded-lg bg-red-950/60 border border-red-800 text-red-300 text-sm">
           <span>{errorMsg}</span>
           <button onClick={() => setErrorMsg('')} className="p-1 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="flex items-center justify-between p-3 rounded-lg bg-emerald-950/70 border border-emerald-700 text-emerald-200 text-sm shadow-md animate-in fade-in duration-200">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{successMsg}</span>
+          </div>
+          <button onClick={() => setSuccessMsg('')} className="p-1 hover:text-white">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -569,13 +797,15 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
               </p>
             </div>
 
-            <button
-              onClick={() => setShowNewRepoModal(true)}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold shadow-sm transition"
-            >
-              <Plus className="w-4 h-4" />
-              <span>New Repository</span>
-            </button>
+            {!isOperator && (
+              <button
+                onClick={() => setShowNewRepoModal(true)}
+                className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold shadow-sm transition"
+              >
+                <Plus className="w-4 h-4" />
+                <span>New Repository</span>
+              </button>
+            )}
           </div>
 
           {/* Filter & Search Controls */}
@@ -614,12 +844,14 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
                 <p className="text-xs text-slate-500">
                   {searchQuery ? `Tidak ada repository dengan kata kunci "${searchQuery}"` : 'Belum ada repository.'}
                 </p>
-                <button
-                  onClick={() => setShowNewRepoModal(true)}
-                  className="px-4 py-2 rounded-md bg-emerald-600 text-white text-xs font-semibold"
-                >
-                  Buat Repository Pertama
-                </button>
+                {!isOperator && (
+                  <button
+                    onClick={() => setShowNewRepoModal(true)}
+                    className="px-4 py-2 rounded-md bg-emerald-600 text-white text-xs font-semibold"
+                  >
+                    Buat Repository Pertama
+                  </button>
+                )}
               </div>
             ) : (
               filteredRepos.map(repo => (
@@ -639,6 +871,16 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
                       <span className="text-[11px] px-2 py-0.5 rounded-full border border-slate-700 bg-slate-800 text-slate-400 font-medium">
                         Public
                       </span>
+                      {repo.linked_project ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-cyan-800 bg-cyan-950/70 text-cyan-300 font-mono">
+                          <Database className="w-3 h-3 text-cyan-400" />
+                          <span>DB: {repo.linked_project.db_name}</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border border-slate-800 bg-slate-900 text-slate-500">
+                          Tanpa DB
+                        </span>
+                      )}
                     </div>
 
                     <p className="text-xs text-slate-300 line-clamp-2">
@@ -737,13 +979,22 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
 
             {/* Right: Actions */}
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowNewRepoModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Repo Baru</span>
-              </button>
+              {isOperator && (
+                <span className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-900 border border-slate-800 text-xs text-amber-400 font-medium">
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Mode Baca Saja (Operator)</span>
+                </span>
+              )}
+
+              {!isOperator && (
+                <button
+                  onClick={() => setShowNewRepoModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Repo Baru</span>
+                </button>
+              )}
 
               <a
                 href={`/api/repositories/${encodeURIComponent(selectedRepo)}/zip`}
@@ -762,6 +1013,127 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
             <p className="text-xs text-slate-400 -mt-2">
               {currentRepoObj.description}
             </p>
+          )}
+
+          {/* Linked Database Banner / Bar */}
+          {linkedProject ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-gradient-to-r from-slate-900 via-cyan-950/20 to-slate-900 border border-cyan-800/60 shadow-lg">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+                  <Database className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-white">Database Terhubung: {linkedProject.name}</span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-800">
+                      {linkedProject.db_name}
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">
+                      Aktif
+                    </span>
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-semibold bg-emerald-950/90 text-emerald-300 border border-emerald-700/60" title="File .env otomatis terbuat dan tersinkronisasi di folder repository">
+                      <Sparkles className="w-2.5 h-2.5 text-emerald-400" />
+                      Auto-Sync .env
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Data dan tabel tersimpan di database PostgreSQL mandiri untuk repository ini. File .env otomatis ter-update.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {canEditRepo && (
+                  <button
+                    onClick={handleApplySchema}
+                    disabled={actionBusy}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-cyan-300 shadow-sm transition disabled:opacity-50"
+                    title="Deteksi skema dari kode repo (file .sql / SQL inline) dan terapkan ke database yang terhubung"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Terapkan Skema Repo</span>
+                  </button>
+                )}
+
+                {canEditRepo && (
+                  <button
+                    onClick={handleSyncEnv}
+                    disabled={actionBusy}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-emerald-300 shadow-sm transition disabled:opacity-50"
+                    title="Sinkronkan ulang kredensial PostgreSQL & DATABASE_URL ke file .env di folder repositori ini"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${actionBusy ? 'animate-spin' : ''}`} />
+                    <span>Sync .env</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => onOpenDatabaseExplorer?.(linkedProject.id)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-cyan-600 hover:bg-cyan-500 text-xs font-semibold text-white shadow-sm transition"
+                  title={`Kelola tabel, kolom, dan baris data proyek ${linkedProject.name}`}
+                >
+                  <Table2 className="w-3.5 h-3.5" />
+                  <span>Kelola Tabel DB</span>
+                </button>
+
+                <button
+                  onClick={() => onOpenPlatformIntegrations?.(linkedProject.id)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white shadow-sm transition"
+                  title={`Hubungkan Blynk, Zenoh, MQTT ke database ${linkedProject.name}`}
+                >
+                  <Radio className="w-3.5 h-3.5" />
+                  <span>Platform & IoT</span>
+                </button>
+
+                <a
+                  href={`/api/projects/${linkedProject.id}/database/export`}
+                  download
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 font-medium transition"
+                  title="Unduh seluruh database dalam format ZIP berisi file CSV per tabel"
+                >
+                  <Download className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Unduh ZIP DB</span>
+                </a>
+
+                {canEditRepo && (
+                  <button
+                    onClick={handleUnlinkProject}
+                    disabled={actionBusy}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] text-slate-400 hover:text-red-300 hover:bg-red-950/40 border border-transparent hover:border-red-900 transition"
+                    title="Putus hubungan repositori dari proyek database ini"
+                  >
+                    <Unlink2 className="w-3 h-3" />
+                    <span>Putus DB</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 border-dashed">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-slate-800 text-slate-400">
+                  <Database className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-300">
+                    Repository ini belum memiliki database PostgreSQL terhubung.
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Anda dapat membuat database baru otomatis untuk repo ini atau menghubungkannya ke proyek yang sudah ada.
+                  </p>
+                </div>
+              </div>
+
+              {!isOperator && (
+                <button
+                  onClick={openInitDbModal}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-xs font-bold text-white shadow-md transition"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>+ Inisiasi Database Repo</span>
+                </button>
+              )}
+            </div>
           )}
 
           {/* Branch bar, folder path, upload buttons */}
@@ -830,7 +1202,7 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
                 <span>Riwayat Commit</span>
               </button>
 
-              {!activeFile && !commits && (
+              {!activeFile && !commits && canEditRepo && (
                 <>
                   <button
                     onClick={() => {
@@ -1085,7 +1457,7 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
                     </button>
                   )}
 
-                  {!isEditing && (
+                  {!isEditing && canEditRepo && (
                     <button
                       onClick={() => {
                         setEditContent(activeFile.content || '')
@@ -1099,13 +1471,15 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
                     </button>
                   )}
 
-                  <button
-                    onClick={handleDeleteFile}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded bg-red-950/40 border border-red-900 text-red-400 hover:bg-red-900/60"
-                    title="Hapus file"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  {canEditRepo && (
+                    <button
+                      onClick={handleDeleteFile}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded bg-red-950/40 border border-red-900 text-red-400 hover:bg-red-900/60"
+                      title="Hapus file"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1474,6 +1848,243 @@ export default function GitHubRepoManager({ api, xsrf, initialRepo, onOpenProjec
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: INISIASI / HUBUNGKAN REPOSITORY KE PROYEK DATABASE */}
+      {showInitDbModal && selectedRepo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-xl border border-slate-800 bg-slate-900 p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Database className="w-5 h-5 text-cyan-400" />
+                <div>
+                  <h3 className="font-semibold text-sm text-white">Inisiasi Database untuk Repo</h3>
+                  <p className="text-[11px] text-slate-400">
+                    Repository: <span className="font-mono text-cyan-300 font-bold">{selectedRepo}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowInitDbModal(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Tab Nav: Buat Baru vs Hubungkan yang Ada */}
+            <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-slate-950 border border-slate-800">
+              <button
+                type="button"
+                onClick={() => setInitDbTab('create')}
+                className={`py-1.5 px-3 rounded-md text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
+                  initDbTab === 'create'
+                    ? 'bg-cyan-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Buat Database Baru (Otomatis)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setInitDbTab('link')}
+                className={`py-1.5 px-3 rounded-md text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
+                  initDbTab === 'link'
+                    ? 'bg-cyan-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Link2 className="w-3.5 h-3.5" />
+                <span>Hubungkan yang Sudah Ada</span>
+              </button>
+            </div>
+
+            {errorMsg && (
+              <div className="rounded-lg border border-red-900 bg-red-950/50 p-2.5 text-xs text-red-300">
+                {errorMsg}
+              </div>
+            )}
+
+            {initDbTab === 'create' ? (
+              <form onSubmit={handleInitDatabase} className="space-y-3">
+                <div className="p-3 rounded-lg bg-emerald-950/30 border border-emerald-800/60 text-[11px] text-emerald-200 space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold text-emerald-300">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Fitur Auto-Sync .env Aktif</span>
+                  </div>
+                  <p className="text-slate-300">
+                    File <code className="bg-slate-900 px-1 py-0.5 rounded text-emerald-400 font-mono">.env</code> akan otomatis dibuat langsung di repositori <span className="font-mono font-bold text-white">{selectedRepo}</span> dengan password dan <code className="bg-slate-900 px-1 py-0.5 rounded text-cyan-300 font-mono">DATABASE_URL</code> (kompatibel langsung untuk Prisma, Sequelize, TypeORM, Alembic, FastAPI, Django, Express, dll).
+                  </p>
+                </div>
+
+                {schemaPreview?.has_schema ? (
+                  <div className="p-3 rounded-lg bg-cyan-950/30 border border-cyan-800/60 text-[11px] space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 font-bold text-cyan-300">
+                        <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Skema Program Terdeteksi Otomatis</span>
+                      </div>
+                      <label className="flex items-center gap-1.5 text-[11px] text-slate-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={autoSchema && !initDbForm.init_sql_path}
+                          disabled={!!initDbForm.init_sql_path}
+                          onChange={e => setAutoSchema(e.target.checked)}
+                          className="accent-cyan-500"
+                        />
+                        <span>Terapkan</span>
+                      </label>
+                    </div>
+                    <p className="text-slate-300">
+                      {schemaPreview.tables.length} tabel akan langsung dibuat saat database dibuat:{' '}
+                      <span className="font-mono text-cyan-300">{schemaPreview.tables.join(', ')}</span>
+                    </p>
+                    <ul className="space-y-0.5 text-[10px] text-slate-400 font-mono max-h-24 overflow-auto">
+                      {schemaPreview.sources.map((s: any) => (
+                        <li key={s.path}>
+                          • {s.path} <span className="text-slate-500">({s.kind})</span>
+                        </li>
+                      ))}
+                    </ul>
+                    {initDbForm.init_sql_path && (
+                      <p className="text-[10px] text-amber-400">
+                        Mode manual: hanya file SQL yang dipilih yang dijalankan.
+                      </p>
+                    )}
+                  </div>
+                ) : schemaPreview ? (
+                  <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-400">
+                    Tidak ada skema otomatis yang terdeteksi. Pilih file SQL di bawah bila ada, atau buat tabel lewat
+                    Database Explorer setelah database dibuat.
+                  </div>
+                ) : null}
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-slate-300">Nama Proyek Database</label>
+                  <input
+                    type="text"
+                    value={initDbForm.name}
+                    onChange={e => setInitDbForm({ ...initDbForm, name: e.target.value })}
+                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-cyan-500 focus:outline-none"
+                    required
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="block text-xs font-medium text-slate-300">Nama Database (PostgreSQL)</label>
+                    <input
+                      type="text"
+                      value={initDbForm.db_name}
+                      onChange={e => setInitDbForm({ ...initDbForm, db_name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') })}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-mono text-white focus:border-cyan-500 focus:outline-none"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-medium text-slate-300">User PostgreSQL</label>
+                    <input
+                      type="text"
+                      value={initDbForm.db_user}
+                      onChange={e => setInitDbForm({ ...initDbForm, db_user: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') })}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-mono text-white focus:border-cyan-500 focus:outline-none"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {repoSqlScripts.length > 0 && (
+                  <div className="space-y-1 pt-1">
+                    <label className="block text-xs font-medium text-emerald-400">
+                      Override: Jalankan Satu File SQL Saja (Opsional):
+                    </label>
+                    <select
+                      value={initDbForm.init_sql_path}
+                      onChange={e => setInitDbForm({ ...initDbForm, init_sql_path: e.target.value })}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-cyan-500 focus:outline-none"
+                    >
+                      <option value="">— Mode otomatis (deteksi semua sumber skema) —</option>
+                      {repoSqlScripts.map(s => (
+                        <option key={s.path} value={s.path}>
+                          {s.path} ({formatBytes(s.size)})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowInitDbModal(false)}
+                    className="px-4 py-2 text-xs text-slate-400 hover:text-white"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={actionBusy}
+                    className="rounded-md bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 px-4 py-2 text-xs font-bold text-white shadow-md disabled:opacity-50"
+                  >
+                    {actionBusy ? 'Membuat Database...' : 'Buat Database & Hubungkan Langsung'}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleLinkProject} className="space-y-4">
+                {projects.length === 0 ? (
+                  <div className="rounded-lg border border-amber-900/60 bg-amber-950/30 p-3 text-xs text-amber-300">
+                    Belum ada proyek database yang tersedia. Gunakan tab <strong>Buat Database Baru</strong> di atas untuk membuat database otomatis.
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-medium text-slate-300 mb-1">Pilih Proyek Database</label>
+                    <select
+                      value={linkProjectId}
+                      onChange={e => setLinkProjectId(e.target.value)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-cyan-500 focus:outline-none"
+                      autoFocus
+                    >
+                      <option value="">— Pilih proyek —</option>
+                      {projects.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.db_name}){p.repository ? ` — saat ini: ${p.repository}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Setelah terhubung, tabel dan konfigurasi proyek akan langsung terhubung ke repositori ini.
+                    </p>
+                    <div className="mt-2 p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-800/50 text-[11px] text-emerald-300 flex items-start gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                      <span>Kredensial database proyek & <code className="font-mono text-white">DATABASE_URL</code> akan otomatis disinkronkan ke file <code className="font-mono text-emerald-400">.env</code> di repository ini.</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowInitDbModal(false)}
+                    className="px-4 py-2 text-xs text-slate-400 hover:text-white"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!linkProjectId || actionBusy}
+                    className="rounded-md bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+                  >
+                    {actionBusy ? 'Menghubungkan...' : 'Hubungkan ke Repo Ini'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # POSTGRES MANAGER — satu perintah:  bash run.sh
 # Aman dijalankan berulang (idempotent). Perintah lain:
-#   bash run.sh status        cek layanan
+#   bash run.sh start         nyalakan semua layanan (PG, Nginx, PHP, Tailscale, Tunnel)
+#   bash run.sh status        cek status seluruh layanan & URL publik
+#   bash run.sh stop          hentikan tunnel
+#   bash run.sh tunnel        kelola tunnel (Cloudflare / ngrok)
 #   bash run.sh reset-admin   buat password admin baru (acak)
 # Opsi (env): PGPORT=5433 WEB_PORT=8080 ADMIN_EMAIL=... ADMIN_PASSWORD=... PGSUPER_USER=... PGSUPER_PASSWORD=...
 set -Eeuo pipefail
@@ -53,9 +56,73 @@ if [ "$CMD" = bg ]; then
   exit 0
 fi
 
+if [ "$CMD" = start ] || [ "$CMD" = restart ]; then
+  log "Memastikan semua layanan Postgres Manager aktif..."
+  sudo systemctl start postgresql 2>/dev/null || sudo service postgresql start 2>/dev/null || true
+  PHPV="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null || echo "8.2")"
+  sudo systemctl start "php${PHPV}-fpm" 2>/dev/null || sudo service "php${PHPV}-fpm" start 2>/dev/null || true
+  sudo systemctl start nginx 2>/dev/null || sudo service nginx start 2>/dev/null || true
+  sudo systemctl start tailscaled 2>/dev/null || sudo service tailscaled start 2>/dev/null || true
+
+  # Cek & nyalakan Cloudflare Tunnel jika belum aktif
+  if ! pgrep -f "cloudflared tunnel" >/dev/null 2>&1; then
+    sudo systemctl start pgm-tunnel 2>/dev/null || bash "$ROOT/tunnel.sh" cloudflare
+  fi
+
+  sleep 1
+  CMD=status
+fi
+
+if [ "$CMD" = stop ]; then
+  log "Menghentikan tunnel..."
+  bash "$ROOT/tunnel.sh" stop 2>/dev/null || true
+  sudo systemctl stop pgm-tunnel 2>/dev/null || true
+  echo "Tunnel dihentikan."
+  exit 0
+fi
+
 if [ "$CMD" = status ]; then
-  systemctl is-active nginx || true
-  curl -s -o /dev/null -w "web :$WEB_PORT -> HTTP %{http_code}\n" "http://127.0.0.1:$WEB_PORT/api/csrf" || true
+  echo "=== STATUS LAYANAN POSTGRES MANAGER ==="
+  if pgrep -f "postgres" >/dev/null 2>&1; then
+    printf '\033[1;32m[OK]\033[0m PostgreSQL aktif di port %s\n' "$PGPORT"
+  else
+    printf '\033[1;31m[MATI]\033[0m PostgreSQL tidak berjalan\n'
+  fi
+
+  PHPV="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null || echo "8.2")"
+  if pgrep -f "php-fpm" >/dev/null 2>&1; then
+    printf '\033[1;32m[OK]\033[0m PHP-FPM aktif\n'
+  else
+    printf '\033[1;31m[MATI]\033[0m PHP-FPM tidak berjalan\n'
+  fi
+
+  if pgrep -f "nginx" >/dev/null 2>&1; then
+    printf '\033[1;32m[OK]\033[0m Nginx web server aktif (port %s)\n' "$WEB_PORT"
+  else
+    printf '\033[1;31m[MATI]\033[0m Nginx tidak berjalan\n'
+  fi
+
+  TS_IP="$(tailscale ip -4 2>/dev/null | head -1 || true)"
+  if [ -n "$TS_IP" ]; then
+    printf '\033[1;32m[OK]\033[0m Tailscale aktif (IP: %s) -> http://%s:%s\n' "$TS_IP" "$TS_IP" "$WEB_PORT"
+  else
+    printf '\033[1;33m[OFF]\033[0m Tailscale tidak terhubung\n'
+  fi
+
+  CF_URL="$(cat "$ROOT/logs/tunnel_url.txt" 2>/dev/null || sudo journalctl -u pgm-tunnel 2>/dev/null | grep -o 'https://[a-zA-Z0-9.-]*\.trycloudflare\.com' | tail -n 1 || true)"
+  if pgrep -f "cloudflared tunnel" >/dev/null 2>&1 && [ -n "$CF_URL" ]; then
+    printf '\033[1;32m[OK]\033[0m Cloudflare HTTPS Tunnel aktif -> %s\n' "$CF_URL"
+  else
+    printf '\033[1;33m[OFF]\033[0m Cloudflare Tunnel tidak berjalan (jalankan: bash tunnel.sh cloudflare)\n'
+  fi
+
+  echo "----------------------------------------"
+  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$WEB_PORT/api/ping" 2>/dev/null || true)"
+  if [ "$code" = 200 ]; then
+    printf '\033[1;32m[OK]\033[0m API Local Responsif: HTTP 200 (http://127.0.0.1:%s)\n' "$WEB_PORT"
+  else
+    printf '\033[1;31m[ERR]\033[0m API Local HTTP %s\n' "$code"
+  fi
   exit 0
 fi
 
@@ -191,16 +258,25 @@ done
 sudo systemctl reload "php${PHPV}-fpm"
 
 # ---------------------------------------------------------------- 9. cek
-log "9/9 Pemeriksaan akhir"
+log "9/9 Pemeriksaan akhir & Akses Jaringan"
 sleep 1
 code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$WEB_PORT/api/csrf" || true)"
 [ "$code" = 204 ] || warn "API belum sehat (HTTP $code). Lihat: tail -n 50 $BACK/storage/logs/laravel-*.log /var/log/nginx/error.log"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$WEB_PORT/" || true)" = 200 ] || warn "Frontend belum 200"
 
+# Cek & pastikan Cloudflare Tunnel siap
+CF_URL="$(cat "$ROOT/logs/tunnel_url.txt" 2>/dev/null || sudo journalctl -u pgm-tunnel 2>/dev/null | grep -o 'https://[a-zA-Z0-9.-]*\.trycloudflare\.com' | tail -n 1 || true)"
+if [ -z "$CF_URL" ] || ! pgrep -f "cloudflared tunnel" >/dev/null 2>&1; then
+  sudo systemctl start pgm-tunnel 2>/dev/null || nohup bash "$ROOT/tunnel.sh" cloudflare >/dev/null 2>&1 &
+  sleep 3
+  CF_URL="$(cat "$ROOT/logs/tunnel_url.txt" 2>/dev/null || sudo journalctl -u pgm-tunnel 2>/dev/null | grep -o 'https://[a-zA-Z0-9.-]*\.trycloudflare\.com' | tail -n 1 || true)"
+fi
+
 printf '\n\033[1;32m=========================================\n POSTGRES MANAGER SIAP\n=========================================\033[0m\n'
-echo " LAN       : http://${LAN_IP:-IP_PI}:$WEB_PORT"
-[ -n "$TS_IP" ] && echo " Tailscale : http://$TS_IP:$WEB_PORT"
-echo " Login     : $ADMIN_EMAIL"
-if [ "$SHOW_PW" = 1 ]; then echo " Password  : $ADMIN_PW   (CATAT SEKARANG, tidak ditampilkan lagi)"
-else echo " Password  : (admin sudah ada; reset dengan: bash run.sh reset-admin)"; fi
+echo " LAN         : http://${LAN_IP:-IP_PI}:$WEB_PORT"
+[ -n "$TS_IP" ] && echo " Tailscale   : http://$TS_IP:$WEB_PORT"
+[ -n "$CF_URL" ] && echo " Cloudflare  : $CF_URL (HTTPS Publik Vercel)"
+echo " Login       : $ADMIN_EMAIL"
+if [ "$SHOW_PW" = 1 ]; then echo " Password    : $ADMIN_PW   (CATAT SEKARANG, tidak ditampilkan lagi)"
+else echo " Password    : (admin sudah ada; reset dengan: bash run.sh reset-admin)"; fi
 echo " Rahasia DB tersimpan di $ENVF (chmod 600). Backup file itu, terutama APP_KEY."

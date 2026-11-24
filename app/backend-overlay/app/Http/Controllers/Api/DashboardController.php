@@ -10,12 +10,21 @@ class DashboardController extends Controller
 {
     public function __invoke(Request $r, ProvisioningService $p)
     {
-        // Always load all projects for the selector dropdown
-        $projectsList = DB::table('projects')
+        $user = auth()->user();
+        $isSuper = $user?->isSuperAdmin() ?? false;
+        $currentUserId = $user?->id;
+
+        // Load projects for selector dropdown (strictly isolated for non-superadmins)
+        $projectsQuery = DB::table('projects')
             ->join('project_databases as d', 'd.project_id', '=', 'projects.id')
-            ->select('projects.id', 'projects.name', 'projects.slug', 'projects.repository', 'd.db_name', 'd.db_user')
-            ->orderBy('projects.name')
-            ->get();
+            ->select('projects.id', 'projects.name', 'projects.slug', 'projects.repository', 'projects.created_by', 'd.db_name', 'd.db_user')
+            ->orderBy('projects.name');
+
+        if (!$isSuper) {
+            $projectsQuery->where('projects.created_by', $currentUserId);
+        }
+
+        $projectsList = $projectsQuery->get();
 
         $selectedProjectId = $r->query('project_id');
 
@@ -45,6 +54,10 @@ class DashboardController extends Controller
 
             if (!$project) {
                 abort(404, 'Proyek database tidak ditemukan.');
+            }
+
+            if (!$isSuper && $project->created_by != $currentUserId) {
+                abort(403, 'Akses ditolak: Anda tidak memiliki izin mengakses data proyek ini.');
             }
 
             $dbName = $project->db_name;
@@ -222,12 +235,32 @@ class DashboardController extends Controller
         $load = sys_getloadavg()[0] ?? 0;
         $ts = trim((string)@shell_exec('tailscale ip -4 2>/dev/null'));
 
+        $userProjectIds = $projectsList->pluck('id')->all();
+        $userDbNames = $projectsList->pluck('db_name')->all();
+
+        $projectCount = $isSuper ? DB::table('projects')->count() : count($userProjectIds);
+        $deployments = app(\App\Services\DeploymentService::class)->getAllDeployments();
+        if (!$isSuper) {
+            $deployments = array_values(array_filter($deployments, fn($item) => in_array($item['project_id'] ?? $item['id'] ?? null, $userProjectIds)));
+            if (isset($pg['databases']) && is_array($pg['databases'])) {
+                $pg['databases'] = array_values(array_filter($pg['databases'], fn($db) => in_array($db['name'] ?? '', $userDbNames)));
+            }
+        }
+
+        $recentOps = $isSuper
+            ? DB::table('audit_logs')->orderByDesc('id')->limit(8)->get()
+            : DB::table('database_operations')->whereIn('project_id', $userProjectIds)->orderByDesc('id')->limit(8)->get();
+
+        $recentBackups = $isSuper
+            ? DB::table('database_backups')->orderByDesc('id')->limit(5)->get()
+            : DB::table('database_backups')->whereIn('project_id', $userProjectIds)->orderByDesc('id')->limit(5)->get();
+
         return response()->json([
             'mode' => 'global',
             'postgres' => $pg,
-            'projects' => DB::table('projects')->count(),
+            'projects' => $projectCount,
             'projects_list' => $projectsList,
-            'deployments' => app(\App\Services\DeploymentService::class)->getAllDeployments(),
+            'deployments' => $deployments,
             'system_ips' => app(\App\Services\DeploymentService::class)->getSystemIps(),
             'system' => [
                 'cpu_percent' => min(100, round($load / $cores * 100, 1)),
@@ -238,8 +271,8 @@ class DashboardController extends Controller
                 'disk_free' => disk_free_space('/'),
                 'tailscale_ip' => $ts ?: null,
             ],
-            'recent_ops' => DB::table('audit_logs')->orderByDesc('id')->limit(8)->get(),
-            'recent_backups' => DB::table('database_backups')->orderByDesc('id')->limit(5)->get(),
+            'recent_ops' => $recentOps,
+            'recent_backups' => $recentBackups,
         ]);
     }
 }

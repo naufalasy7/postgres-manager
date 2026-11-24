@@ -8,6 +8,7 @@ Dashboard web (Laravel 11 + React/TypeScript/Vite/Tailwind) untuk mengelola bany
 |---|---|
 | Login admin (session, CSRF, rate limit 5/menit, logout, audit login) | ✅ Ada |
 | Git Repositories (antarmuka mirip GitHub: file explorer, drag & drop upload, online code editor, download raw/zip, riwayat commit) | ✅ Ada |
+| Inisiasi database dari repository: auto-deteksi skema (file `.sql` + SQL inline Python/JS/PHP), buat tabel, auto-sync `.env`/`config.env`, auto-connect | ✅ Ada |
 | Master DB + 11 tabel (migrations) + 4 template bawaan | ✅ Ada |
 | Dashboard: versi/host/port PG, koneksi, ukuran DB, CPU, RAM, disk, Tailscale | ✅ Ada (data nyata) |
 | Project manager: daftar, cari, buat, arsip (API) | ✅ Ada |
@@ -15,8 +16,11 @@ Dashboard web (Laravel 11 + React/TypeScript/Vite/Tailwind) untuk mengelola bany
 | Backup per-database (pg_dump -Fc, sha256, riwayat, download aman) | ✅ Ada di API; tombol UI belum |
 | Full backup (`pg_dumpall`) | ✅ Skrip + cron |
 | Audit log | ✅ Ada |
+| RBAC 3 level: Super Admin, Admin Terbatas (workspace mandiri), Operator (read-only) | ✅ Ada |
+| Database Explorer per proyek: lihat tabel & tipe data, generate tabel, edit/rename/hapus kolom, CRUD baris, unduh CSV / ZIP seluruh DB | ✅ Ada |
+| Konektor platform IoT: Blynk (token/URL), Zenoh (REST/TCP), MQTT (broker/topic) + webhook telemetri | ✅ Ada |
 | Edit proyek, hapus proyek dengan safeguard | ⏳ Belum |
-| Database Explorer + SQL editor | ⏳ Belum |
+| SQL editor bebas (di luar skrip repo) | ⏳ Belum |
 | Konfigurasi PostgreSQL (ALTER SYSTEM) | ⏳ Belum |
 | Manajemen user/role DB | ⏳ Belum |
 | Restore, verifikasi integritas, backup terjadwal otomatis | ⏳ Belum |
@@ -81,6 +85,21 @@ Dibuat otomatis oleh `run.sh` (`/etc/nginx/sites-available/postgres-manager`). B
    - **Online Editor**: Edit file langsung di web dengan riwayat commit dan format diff.
    - **Download Raw / ZIP**: Unduh file satuan atau seluruh repository dalam format .zip.
    - **Multi-Repository**: Buat repository baru langsung dari web.
+
+### Inisiasi Database Langsung dari Repository (Auto-Connect)
+1. Buka tab **Repositories** → pilih repository → klik **+ Inisiasi Database Repo**.
+2. Aplikasi memindai repo dan menampilkan **skema yang dibutuhkan program secara otomatis**:
+   - file `.sql` / `.pgsql` (`schema.sql`, `init.sql`, `migrations/*.sql`, dump, dsb.);
+   - SQL inline di kode Python (contoh Smartroom: `SCHEMA = """CREATE TABLE ..."""` di `backend/main.py`);
+   - SQL inline di template literal JavaScript/TypeScript dan heredoc PHP.
+3. Klik **Buat Database & Hubungkan Langsung**. Dalam satu langkah:
+   - role + database PostgreSQL dibuat;
+   - tabel/index dari skema yang terdeteksi langsung dieksekusi;
+   - `.env` (dan `config.env` legacy seperti Smartroom) di repo diisi kredensial + `DATABASE_URL`;
+   - proyek terdaftar dan langsung terhubung ke repo.
+4. Buka **Deploy** pada proyek → program berjalan dengan database yang sudah siap.
+5. Untuk database yang **sudah ada**, pilih tab **Hubungkan yang Sudah Ada**, lalu klik **Terapkan Skema Repo** bila tabelnya belum ada. Tombol **Sync .env** menyinkronkan ulang kredensial kapan saja.
+
 3. **Proyek → + Proyek** → isi wizard → password proyek tampil **sekali**; tersimpan terenkripsi (APP_KEY) di master DB dan di `projects/<slug>/config/.env` (0600).
 4. **Auto Deploy Proyek Database & Akses via IP:Port**:
    - Setiap proyek database dapat langsung di-deploy menjadi layanan web/API aktif.
@@ -90,6 +109,13 @@ Dibuat otomatis oleh `run.sh` (`/etc/nginx/sites-available/postgres-manager`). B
 5. Backup: `POST /api/projects/{id}/backups`; file di `projects/<slug>/backups/`.
 6. Full backup terjadwal: `0 2 * * * PGUSER=postgres PGPASSWORD=... /home/pi/Database/postgres-manager/deployment/scripts/backup-all.sh`
 7. Update: `./deployment/scripts/update.sh`
+8. **Tabel Database (per proyek/repo)**: buka tab **Tabel Database**, pilih proyek, atau klik **Tabel DB** pada baris proyek / **Kelola Tabel DB** di halaman repository yang terhubung ke proyek.
+   - **Generate tabel** lewat form klik-klik: nama tabel, kolom, tipe data, primary key, NOT NULL, UNIQUE, dan default.
+   - **Edit struktur**: tambah kolom, ubah tipe/default/NOT NULL, rename kolom, rename tabel, hapus kolom/tabel.
+   - **Kelola isi**: browse data dengan pagination & sorting, tambah/edit/hapus baris (termasuk kolom JSONB).
+   - **Ekspor**: unduh satu tabel sebagai CSV atau seluruh database sebagai ZIP berisi CSV.
+   - Operator (`user`) hanya bisa melihat & mengunduh; pembuatan/perubahan dikunci untuk Admin Terbatas & Super Admin.
+9. **Platform & IoT**: hubungkan database proyek ke Blynk, Zenoh (Zenoh-Pico/REST), atau MQTT memakai URL/token/topic. Tersedia uji koneksi, sinkronisasi manual, worker background, log real-time, dan webhook publik untuk menerima telemetri.
 
 ## 7. Pengembangan lokal
 ```bash
@@ -98,6 +124,6 @@ cd app/frontend && npm run dev           # :5173, proxy /api → :8000
 ```
 
 ## 8. Roadmap
-Explorer read-only → SQL editor (default read-only) → config PostgreSQL → role/user → restore + verifikasi → backup terjadwal → hapus proyek bersafeguard.
+~~Explorer read-only~~ (✅ Database Explorer + visual table builder) → SQL editor (default read-only) → config PostgreSQL → role/user → restore + verifikasi → backup terjadwal → hapus proyek bersafeguard.
 
 Lihat `SECURITY.md` dan `TROUBLESHOOTING.md`.

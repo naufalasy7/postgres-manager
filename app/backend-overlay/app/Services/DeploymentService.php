@@ -271,6 +271,7 @@ class DeploymentService
         }
 
         return [
+            'id' => $projectId,
             'project_id' => $projectId,
             'name' => $project->name,
             'slug' => $project->slug,
@@ -374,14 +375,25 @@ class DeploymentService
         // Decrypt DB password
         $dbPassword = Crypt::decryptString($project->password_encrypted);
 
+        // URL koneksi universal (Prisma, Sequelize, TypeORM, Alembic, FastAPI, dll.)
+        $encodedUser = rawurlencode($project->db_user);
+        $encodedPass = rawurlencode($dbPassword);
+        $dbUrl = "postgresql://{$encodedUser}:{$encodedPass}@{$project->host}:{$project->port}/{$project->db_name}?schema=public&sslmode=disable";
+        $postgresUrl = "postgresql://{$encodedUser}:{$encodedPass}@{$project->host}:{$project->port}/{$project->db_name}?sslmode=disable";
+        $asyncUrl = "postgresql+asyncpg://{$encodedUser}:{$encodedPass}@{$project->host}:{$project->port}/{$project->db_name}";
+
         // Update project .env
-        $envContent = "DB_HOST={$project->host}\n"
+        $envContent = "DB_CONNECTION=pgsql\n"
+            . "DB_HOST={$project->host}\n"
             . "DB_PORT={$project->port}\n"
             . "DB_DATABASE={$project->db_name}\n"
             . "DB_NAME={$project->db_name}\n"
             . "DB_USERNAME={$project->db_user}\n"
             . "DB_USER={$project->db_user}\n"
             . "DB_PASSWORD={$dbPassword}\n"
+            . "DATABASE_URL=" . escapeshellarg($dbUrl) . "\n"
+            . "POSTGRES_URL=" . escapeshellarg($postgresUrl) . "\n"
+            . "ASYNC_DATABASE_URL=" . escapeshellarg($asyncUrl) . "\n"
             . "PORT={$port}\n"
             . "HTTP_PORT={$port}\n"
             . "HOST=0.0.0.0\n"
@@ -394,8 +406,18 @@ class DeploymentService
         file_put_contents("{$projectDir}/config/.env", $envContent);
         @chmod("{$projectDir}/config/.env", 0600);
 
-        // Also if repository exists, keep its config in sync if config.env exists
+        // Auto-Sync .env ke folder repository jika terhubung
         if ($project->repository) {
+            try {
+                app(\App\Services\RepoEnvSyncService::class)->sync($project->repository, [
+                    'host' => $project->host,
+                    'port' => $project->port,
+                    'db_name' => $project->db_name,
+                    'db_user' => $project->db_user,
+                    'password' => $dbPassword,
+                ]);
+            } catch (\Throwable $e) {}
+
             $repoDir = "{$this->root}/repositories/{$project->repository}";
             $repoConfigEnv = "{$repoDir}/smartroom-pi/smartroom-pi/config.env";
             if (file_exists($repoConfigEnv)) {

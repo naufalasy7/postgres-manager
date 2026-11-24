@@ -3,8 +3,14 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Services\Audit;
+use App\Services\ProvisioningService;
+use App\Services\RepoEnvSyncService;
+use App\Services\RepoSchemaInspector;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Str;
 use Symfony\Component\Process\Process;
 
 class RepositoryController extends Controller
@@ -36,7 +42,49 @@ class RepositoryController extends Controller
         return $dir;
     }
 
-    protected function resolveRepoPath(string $repo): string
+    public function getRepoOwner(string $repoPath): string
+    {
+        $ownerFile = $repoPath . '/.pgm_owner';
+        if (file_exists($ownerFile)) {
+            $owner = trim((string)file_get_contents($ownerFile));
+            if (!empty($owner)) {
+                return $owner;
+            }
+        }
+        return 'nnaufalasyam7@gmail.com';
+    }
+
+    public function setRepoOwner(string $repoPath, string $ownerEmail): void
+    {
+        @file_put_contents($repoPath . '/.pgm_owner', trim($ownerEmail));
+    }
+
+    protected function checkRepoAccess(string $repoPath, bool $writeAccess = false): void
+    {
+        $user = auth()->user();
+        if (!$user) {
+            abort(401, 'Unauthenticated');
+        }
+
+        // Super Admin has full unrestricted access
+        if ($user->isSuperAdmin()) {
+            return;
+        }
+
+        $owner = $this->getRepoOwner($repoPath);
+
+        // Strict Isolation: Users (Admin / Operator) CANNOT access other users' repositories!
+        if ($owner !== $user->email) {
+            abort(403, 'Akses ditolak: Repositori ini milik pengguna lain dan dilindungi.');
+        }
+
+        // Operator role is strictly read-only on repositories (no editing/uploading/deleting)
+        if ($writeAccess && $user->role === 'user') {
+            abort(403, 'Akses ditolak: Role Operator hanya memiliki izin membaca repositori.');
+        }
+    }
+
+    protected function resolveRepoPath(string $repo, bool $writeAccess = false): string
     {
         if (!preg_match('/^[a-zA-Z0-9_\-\.]+$/', $repo)) {
             abort(400, 'Invalid repository name format.');
@@ -46,6 +94,7 @@ class RepositoryController extends Controller
         if (!is_dir($repoPath)) {
             abort(404, "Repository '{$repo}' not found.");
         }
+        $this->checkRepoAccess($repoPath, $writeAccess);
         return $repoPath;
     }
 
@@ -108,8 +157,20 @@ class RepositoryController extends Controller
         $dirs = File::directories($base);
         $repos = [];
 
+        $user = auth()->user();
+        $isSuper = $user?->isSuperAdmin() ?? false;
+        $userEmail = $user?->email;
+
         foreach ($dirs as $dir) {
             $name = basename($dir);
+            $repoOwner = $this->getRepoOwner($dir);
+
+            // STRICT PRIVACY & ISOLATION:
+            // Non-superadmin users CANNOT see repositories belonging to Super Admin or other users!
+            if (!$isSuper && $repoOwner !== $userEmail) {
+                continue;
+            }
+
             $isGit = is_dir($dir . '/.git');
             $branch = 'main';
             $commitCount = 0;
@@ -160,12 +221,28 @@ class RepositoryController extends Controller
                 }
             }
 
+            $linkedProject = DB::table('projects as p')
+                ->join('project_databases as d', 'd.project_id', '=', 'p.id')
+                ->where('p.repository', $name)
+                ->where('p.status', '!=', 'archived')
+                ->select('p.id', 'p.name', 'p.slug', 'd.db_name')
+                ->first();
+
             $repos[] = [
                 'name' => $name,
                 'description' => $desc ?: 'PostgreSQL scripts & configuration repository',
                 'branch' => $branch,
                 'commits_count' => $commitCount,
                 'last_commit' => $lastCommit,
+                'owner' => $repoOwner,
+                'is_owner' => ($repoOwner === $userEmail),
+                'can_edit' => ($isSuper || ($repoOwner === $userEmail && $user?->role !== 'user')),
+                'linked_project' => $linkedProject ? [
+                    'id' => $linkedProject->id,
+                    'name' => $linkedProject->name,
+                    'slug' => $linkedProject->slug,
+                    'db_name' => $linkedProject->db_name,
+                ] : null,
                 'updated_at' => date('Y-m-d H:i:s', filemtime($dir)),
             ];
         }
@@ -175,6 +252,11 @@ class RepositoryController extends Controller
 
     public function store(Request $r)
     {
+        $user = $r->user();
+        if ($user && $user->role === 'user') {
+            return response()->json(['message' => 'Role Operator tidak diizinkan membuat repositori baru. Fitur ini hanya untuk Admin Terbatas dan Super Admin.'], 403);
+        }
+
         $d = $r->validate([
             'name' => ['required', 'string', 'max:60', 'regex:/^[a-zA-Z0-9_\-\.]+$/'],
             'description' => 'nullable|string|max:500',
@@ -189,7 +271,7 @@ class RepositoryController extends Controller
 
         File::makeDirectory($repoPath, 0775, true, true);
 
-        $userEmail = $r->user()?->email ?? 'admin@localhost';
+        $userEmail = $user?->email ?? 'admin@localhost';
         try {
             $this->runGit($repoPath, ['init', '-b', 'main'], $userEmail);
 
@@ -199,15 +281,21 @@ class RepositoryController extends Controller
 
             $this->runGit($repoPath, ['add', 'README.md'], $userEmail);
             $this->runGit($repoPath, ['commit', '-m', 'Initial commit'], $userEmail);
+
+            // Record repository owner
+            $this->setRepoOwner($repoPath, $userEmail);
         } catch (\Throwable $e) {
             return response()->json(['message' => 'Failed to initialize git repository: ' . $e->getMessage()], 500);
         }
 
-        Audit::log('repository.create', $d['name']);
+        Audit::log('repository.create', $d['name'], 'ok', ['owner' => $userEmail]);
         return response()->json([
             'name' => $d['name'],
             'description' => $d['description'] ?? '',
             'branch' => 'main',
+            'owner' => $userEmail,
+            'is_owner' => true,
+            'can_edit' => true,
             'message' => 'Repository created successfully.',
         ], 201);
     }
@@ -251,7 +339,7 @@ class RepositoryController extends Controller
         $readmeContent = null;
 
         foreach ($items as $item) {
-            if ($item === '.' || $item === '..' || $item === '.git') continue;
+            if ($item === '.' || $item === '..' || $item === '.git' || $item === '.pgm_owner') continue;
 
             $full = $targetDir . '/' . $item;
             $rel = ltrim(($subpath ? ($subpath . '/' . $item) : $item), '/');
@@ -423,7 +511,7 @@ class RepositoryController extends Controller
 
     public function upload(Request $r, string $repo)
     {
-        $repoPath = $this->resolveRepoPath($repo);
+        $repoPath = $this->resolveRepoPath($repo, true);
         $subpath = trim((string)$r->input('path', ''), '/');
         $targetDir = $this->safePath($repoPath, $subpath);
 
@@ -517,7 +605,7 @@ class RepositoryController extends Controller
             'commit_message' => 'nullable|string|max:255',
         ]);
 
-        $repoPath = $this->resolveRepoPath($repo);
+        $repoPath = $this->resolveRepoPath($repo, true);
         $subpath = trim($d['path'], '/');
         $fullPath = $this->safePath($repoPath, $subpath);
 
@@ -558,7 +646,7 @@ class RepositoryController extends Controller
             'commit_message' => 'nullable|string|max:255',
         ]);
 
-        $repoPath = $this->resolveRepoPath($repo);
+        $repoPath = $this->resolveRepoPath($repo, true);
         $subpath = trim($d['path'], '/');
         $fullPath = $this->safePath($repoPath, $subpath);
 
@@ -648,6 +736,28 @@ class RepositoryController extends Controller
         return response()->json($scripts);
     }
 
+    /**
+     * Deteksi otomatis skema database yang diminta program di dalam repository.
+     * Contoh: file .sql, atau SQL inline di main.py (gaya Smartroom).
+     */
+    public function schemaPreview(Request $r, string $repo)
+    {
+        $this->resolveRepoPath($repo);
+
+        try {
+            $preview = (new RepoSchemaInspector())->preview($repo);
+            return response()->json($preview);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'repo' => $repo,
+                'sources' => [],
+                'tables' => [],
+                'has_schema' => false,
+                'message' => 'Gagal memindai skema repository: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
     protected function triggerAutoDeploy(string $repo): void
     {
         try {
@@ -659,5 +769,318 @@ class RepositoryController extends Controller
                 app(\App\Services\DeploymentService::class)->deploy($p->id);
             }
         } catch (\Throwable $e) {}
+    }
+
+    /**
+     * Inisiasi dan buat database baru otomatis khusus untuk repository ini.
+     */
+    public function initDatabase(Request $r, string $repo, ProvisioningService $svc)
+    {
+        $repoPath = $this->resolveRepoPath($repo, true);
+        $user = $r->user();
+        if ($user && $user->role === 'user') {
+            return response()->json(['message' => 'Role Operator tidak diizinkan membuat database.'], 403);
+        }
+
+        // Check if repo already has an active project
+        $existing = DB::table('projects')
+            ->join('project_databases as d', 'd.project_id', '=', 'projects.id')
+            ->where('projects.repository', $repo)
+            ->where('projects.status', 'active')
+            ->select('projects.id', 'projects.name', 'projects.slug', 'd.db_name')
+            ->first();
+
+        if ($existing) {
+            return response()->json([
+                'message' => "Repository '{$repo}' sudah terhubung ke proyek database '{$existing->name}' ({$existing->db_name}).",
+                'project' => $existing,
+            ], 409);
+        }
+
+        $defaultSlug = Str::slug($repo) ?: 'repo';
+        if (strlen($defaultSlug) < 3) $defaultSlug .= '-db';
+        $defaultDbName = preg_replace('/[^a-z0-9_]/', '_', strtolower($repo)) . '_db';
+        $defaultDbName = ltrim($defaultDbName, '0123456789_') ?: 'db_' . $defaultSlug;
+        $defaultDbName = substr($defaultDbName, 0, 30);
+        $defaultDbUser = substr(preg_replace('/[^a-z0-9_]/', '_', strtolower($repo)) . '_user', 0, 30);
+        $defaultDbUser = ltrim($defaultDbUser, '0123456789_') ?: 'u_' . $defaultSlug;
+
+        $d = $r->validate([
+            'name' => 'nullable|string|max:100',
+            'slug' => 'nullable|string|regex:/^[a-z][a-z0-9-]{2,40}$/|unique:projects,slug',
+            'db_name' => 'nullable|string|regex:/^[a-z][a-z0-9_]{2,40}$/',
+            'db_user' => 'nullable|string|regex:/^[a-z][a-z0-9_]{2,40}$/',
+            'description' => 'nullable|string|max:500',
+            'template_id' => 'nullable|integer|exists:database_templates,id',
+            'init_sql_path' => 'nullable|string|max:255',
+            'auto_schema' => 'nullable|boolean',
+        ]);
+
+        $name = !empty($d['name']) ? trim($d['name']) : ($repo . ' Database');
+        $slug = !empty($d['slug']) ? trim($d['slug']) : ($defaultSlug . '-' . substr(bin2hex(random_bytes(3)), 0, 4));
+        $dbName = !empty($d['db_name']) ? trim($d['db_name']) : ($defaultDbName . '_' . substr(bin2hex(random_bytes(2)), 0, 4));
+        $dbUser = !empty($d['db_user']) ? trim($d['db_user']) : ($defaultDbUser . '_' . substr(bin2hex(random_bytes(2)), 0, 4));
+        $templateId = !empty($d['template_id']) ? (int)$d['template_id'] : 1;
+
+        // Default: bila tidak memilih file SQL tertentu, deteksi & terapkan skema repo otomatis.
+        $autoSchema = array_key_exists('auto_schema', $d)
+            ? (bool)$d['auto_schema']
+            : empty($d['init_sql_path']);
+
+        $provisionData = [
+            'name' => $name,
+            'slug' => $slug,
+            'description' => $d['description'] ?? "Database otomatis terhubung untuk repositori {$repo}",
+            'db_name' => $dbName,
+            'db_user' => $dbUser,
+            'encoding' => 'UTF8',
+            'locale' => 'C.UTF-8',
+            'template_id' => $templateId,
+            'backup_policy' => 'none',
+            'repository' => $repo,
+            'init_sql_path' => $d['init_sql_path'] ?? null,
+            'auto_schema' => $autoSchema,
+        ];
+
+        try {
+            $result = $svc->create($provisionData);
+            Audit::log('repository.init_db', "{$repo} -> {$dbName}", 'ok', ['project_slug' => $slug]);
+            $result['repository'] = $repo;
+            $result['env_synced'] = true;
+            return response()->json($result, 201);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
+     * Terapkan skema yang terdeteksi dari repository ke database proyek yang sudah terhubung.
+     * Berguna saat repo dihubungkan ke database lama, atau saat program menambah tabel baru.
+     */
+    public function applySchema(Request $r, string $repo, ProvisioningService $svc)
+    {
+        $this->resolveRepoPath($repo, true);
+        $user = $r->user();
+        if ($user && $user->role === 'user') {
+            return response()->json(['message' => 'Role Operator tidak diizinkan mengubah skema database.'], 403);
+        }
+
+        $project = DB::table('projects')
+            ->join('project_databases as d', 'd.project_id', '=', 'projects.id')
+            ->join('database_connections as c', 'c.project_id', '=', 'projects.id')
+            ->where('projects.repository', $repo)
+            ->where('projects.status', 'active')
+            ->select(
+                'projects.id',
+                'projects.name',
+                'projects.slug',
+                'projects.created_by',
+                'd.db_name',
+                'd.db_user',
+                'c.password_encrypted'
+            )
+            ->first();
+
+        if (!$project) {
+            return response()->json([
+                'message' => "Repository '{$repo}' belum terhubung ke database manapun. Buat atau hubungkan database terlebih dahulu.",
+            ], 422);
+        }
+
+        if (!$user->isSuperAdmin() && $project->created_by != $user->id) {
+            abort(403, 'Akses ditolak: Anda hanya dapat mengubah skema database milik Anda.');
+        }
+
+        $discovery = (new RepoSchemaInspector())->discover($repo);
+        if (!$discovery['has_schema']) {
+            return response()->json([
+                'message' => "Tidak ada skema database yang terdeteksi di repository '{$repo}'.",
+                'sources' => [],
+                'tables' => [],
+            ], 422);
+        }
+
+        $report = [
+            'project' => ['id' => $project->id, 'name' => $project->name, 'db_name' => $project->db_name],
+            'applied' => [],
+            'tables' => [],
+            'warnings' => [],
+            'sources' => array_map(
+                fn(array $s) => ['path' => $s['path'], 'kind' => $s['kind'], 'tables' => $s['tables']],
+                $discovery['sources']
+            ),
+        ];
+
+        try {
+            $password = Crypt::decryptString($project->password_encrypted);
+            $pdo = $svc->admin($project->db_name, $project->db_user, $password);
+
+            foreach ($discovery['sources'] as $src) {
+                // Pengaman: jangan jalankan perintah destruktif pada database yang sudah berisi data.
+                $destructive = (bool) preg_match(
+                    '/\b(DROP\s+(TABLE|SCHEMA|DATABASE)|TRUNCATE\s+(TABLE\s+)?\w+|DELETE\s+FROM|ALTER\s+TABLE[\s\S]{0,200}?DROP\s+(COLUMN|CONSTRAINT))\b/i',
+                    $src['sql']
+                );
+                if ($destructive) {
+                    $report['warnings'][] = "{$src['path']}: dilewati karena mengandung perintah destruktif (DROP/TRUNCATE/DELETE). Jalankan manual bila memang disengaja.";
+                    continue;
+                }
+
+                try {
+                    $pdo->exec($src['sql']);
+                    $report['applied'][] = $src['path'];
+                    foreach ($src['tables'] as $tbl) {
+                        if (!in_array($tbl, $report['tables'], true)) {
+                            $report['tables'][] = $tbl;
+                        }
+                    }
+                } catch (\Throwable $se) {
+                    $report['warnings'][] = "{$src['path']}: " . $se->getMessage();
+                }
+            }
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Gagal menerapkan skema: ' . $e->getMessage()], 422);
+        }
+
+        Audit::log('repository.apply_schema', "{$repo} -> {$project->db_name}", 'ok', [
+            'project_id' => $project->id,
+            'applied' => $report['applied'],
+            'tables' => $report['tables'],
+            'warnings' => $report['warnings'],
+        ]);
+
+        $message = !empty($report['applied'])
+            ? "Skema repository '{$repo}' berhasil diterapkan ke database '{$project->db_name}'."
+            : "Tidak ada skema yang berhasil diterapkan. Periksa peringatan di bawah.";
+
+        return response()->json(['message' => $message] + $report);
+    }
+
+    /**
+     * Hubungkan repository ke database yang sudah ada.
+     */
+    public function linkDatabase(Request $r, string $repo)
+    {
+        $repoPath = $this->resolveRepoPath($repo, true);
+        $user = $r->user();
+        if ($user && $user->role === 'user') {
+            return response()->json(['message' => 'Role Operator tidak diizinkan mengubah hubungan database.'], 403);
+        }
+
+        $d = $r->validate([
+            'project_id' => 'required|integer|exists:projects,id',
+        ]);
+
+        $project = DB::table('projects')->where('id', $d['project_id'])->first();
+        if (!$project) abort(404, 'Proyek database tidak ditemukan.');
+
+        if (!$user->isSuperAdmin() && $project->created_by != $user->id) {
+            abort(403, 'Akses ditolak: Anda hanya dapat menghubungkan proyek database milik Anda.');
+        }
+
+        // Link project to this repo
+        DB::table('projects')->where('id', $project->id)->update([
+            'repository' => $repo,
+            'updated_at' => now(),
+        ]);
+
+        // Auto-Sync .env ke folder repository
+        $syncedFiles = [];
+        $conn = DB::table('database_connections')->where('project_id', $project->id)->first();
+        if ($conn) {
+            try {
+                $dbPassword = Crypt::decryptString($conn->password_encrypted);
+                $syncedFiles = app(RepoEnvSyncService::class)->sync($repo, [
+                    'host' => $conn->host,
+                    'port' => $conn->port,
+                    'db_name' => $conn->db_name,
+                    'db_user' => $conn->username,
+                    'password' => $dbPassword,
+                ]);
+            } catch (\Throwable $e) {}
+        }
+
+        Audit::log('repository.link_db', "{$repo} <-> {$project->name}", 'ok', [
+            'project_id' => $project->id,
+            'synced_files' => $syncedFiles,
+        ]);
+
+        return response()->json([
+            'message' => "Repository '{$repo}' berhasil dihubungkan ke proyek database '{$project->name}'." . (!empty($syncedFiles) ? ' File .env di repository otomatis disinkronkan.' : ''),
+            'project_id' => $project->id,
+            'repository' => $repo,
+            'env_synced' => !empty($syncedFiles),
+            'synced_files' => $syncedFiles,
+        ]);
+    }
+
+    /**
+     * Putus hubungan repository dari proyek database.
+     */
+    public function unlinkDatabase(Request $r, string $repo)
+    {
+        $repoPath = $this->resolveRepoPath($repo, true);
+        $user = $r->user();
+        if ($user && $user->role === 'user') {
+            return response()->json(['message' => 'Role Operator tidak diizinkan mengubah hubungan database.'], 403);
+        }
+
+        DB::table('projects')->where('repository', $repo)->update([
+            'repository' => null,
+            'updated_at' => now(),
+        ]);
+
+        Audit::log('repository.unlink_db', $repo, 'ok');
+
+        return response()->json([
+            'message' => "Hubungan database pada repository '{$repo}' berhasil diputus.",
+        ]);
+    }
+
+    /**
+     * Manual / trigger sinkronisasi file .env di repository sesuai konfigurasi database terhubung.
+     */
+    public function syncEnv(Request $r, string $repo)
+    {
+        $repoPath = $this->resolveRepoPath($repo, true);
+        $user = $r->user();
+        if ($user && $user->role === 'user') {
+            return response()->json(['message' => 'Role Operator tidak diizinkan mengubah file repository.'], 403);
+        }
+
+        $project = DB::table('projects')
+            ->join('project_databases as d', 'd.project_id', '=', 'projects.id')
+            ->join('database_connections as c', 'c.project_id', '=', 'projects.id')
+            ->where('projects.repository', $repo)
+            ->where('projects.status', 'active')
+            ->select('projects.id', 'projects.name', 'd.db_name', 'd.db_user', 'c.host', 'c.port', 'c.password_encrypted')
+            ->first();
+
+        if (!$project) {
+            return response()->json([
+                'message' => "Repository '{$repo}' belum terhubung ke database manapun. Hubungkan atau buat database terlebih dahulu.",
+            ], 422);
+        }
+
+        $dbPassword = Crypt::decryptString($project->password_encrypted);
+        $syncedFiles = app(RepoEnvSyncService::class)->sync($repo, [
+            'host' => $project->host,
+            'port' => $project->port,
+            'db_name' => $project->db_name,
+            'db_user' => $project->db_user,
+            'password' => $dbPassword,
+        ]);
+
+        Audit::log('repository.sync_env', "{$repo} (.env synced from {$project->db_name})");
+
+        return response()->json([
+            'message' => "File .env di repository '{$repo}' berhasil disinkronkan dengan database '{$project->db_name}'.",
+            'synced_files' => $syncedFiles,
+            'project' => [
+                'id' => $project->id,
+                'name' => $project->name,
+                'db_name' => $project->db_name,
+            ],
+        ]);
     }
 }

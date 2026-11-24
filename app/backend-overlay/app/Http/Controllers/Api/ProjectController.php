@@ -46,10 +46,20 @@ class ProjectController extends Controller
         $isSuper = $user?->isSuperAdmin() ?? false;
         $currentUserId = $user?->id;
 
-        $results = $q->get()->map(function ($proj) use ($isSuper, $currentUserId) {
+        // STRICT PRIVACY & PROTECTION:
+        // Non-superadmin users CANNOT see Super Admin's projects or other users' projects!
+        // Each user only sees their own projects, eliminating any risk of tampering.
+        if (!$isSuper) {
+            $q->where('projects.created_by', $currentUserId);
+        }
+
+        $results = $q->get()->map(function ($proj) use ($isSuper, $currentUserId, $user) {
             $isOwner = ($currentUserId && $proj->created_by == $currentUserId);
-            $proj->can_edit = $isSuper || $isOwner;
+            $isOperator = ($user?->role === 'user');
+            // Super Admin and Admin Terbatas (owner) can edit/deploy/backup; Operator is restricted
+            $proj->can_edit = ($isSuper || $isOwner) && !$isOperator;
             $proj->is_owner = $isOwner;
+            $proj->is_operator = $isOperator;
             return $proj;
         });
 
@@ -58,6 +68,11 @@ class ProjectController extends Controller
 
     public function store(Request $r, ProvisioningService $svc)
     {
+        $user = $r->user();
+        if ($user && $user->role === 'user') {
+            return response()->json(['message' => 'Role Operator tidak diizinkan membuat database/proyek baru. Fitur ini khusus untuk Admin Terbatas dan Super Admin.'], 403);
+        }
+
         $res = config('pgmanager.reserved');
         $d = $r->validate([
             'name' => 'required|string|max:100',
@@ -69,9 +84,15 @@ class ProjectController extends Controller
             'locale' => 'required|in:C,C.UTF-8,en_US.UTF-8',
             'template_id' => 'required|exists:database_templates,id',
             'backup_policy' => 'required|in:none,daily,weekly',
-            'repository' => 'nullable|string|max:100',
+            'repository' => ['nullable', 'string', 'max:100', 'regex:/^[A-Za-z0-9_.\-]+$/'],
             'init_sql_path' => 'nullable|string|max:255',
+            'auto_schema' => 'nullable|boolean',
         ]);
+
+        // Bila tidak memilih file SQL tertentu, otomatis deteksi skema dari repo.
+        $d['auto_schema'] = array_key_exists('auto_schema', $d)
+            ? (bool)$d['auto_schema']
+            : empty($d['init_sql_path']);
 
         try {
             return response()->json($svc->create($d), 201);
@@ -90,6 +111,10 @@ class ProjectController extends Controller
             abort(403, 'Akses ditolak: Hanya pemilik proyek atau Super Admin yang dapat mengarsipkan proyek ini.');
         }
 
+        if ($user->role === 'user') {
+            return response()->json(['message' => 'Role Operator tidak memiliki izin menghapus atau mengarsipkan database.'], 403);
+        }
+
         DB::table('projects')->where('id', $id)->update(['status' => 'archived', 'updated_at' => now()]);
         Audit::log('project.archive', (string)$id);
         return response()->noContent();
@@ -98,7 +123,7 @@ class ProjectController extends Controller
     public function linkRepo(Request $r, int $id)
     {
         $d = $r->validate([
-            'repository' => 'nullable|string|max:100',
+            'repository' => ['nullable', 'string', 'max:100', 'regex:/^[A-Za-z0-9_.\-]+$/'],
         ]);
 
         $user = auth()->user();
@@ -109,15 +134,38 @@ class ProjectController extends Controller
             abort(403, 'Akses ditolak: Hanya pemilik proyek atau Super Admin yang dapat menghubungkan repository pada proyek ini.');
         }
 
+        if ($user->role === 'user') {
+            return response()->json(['message' => 'Role Operator tidak diizinkan mengubah repository terhubung proyek.'], 403);
+        }
+
         DB::table('projects')->where('id', $id)->update([
             'repository' => $d['repository'] ?: null,
             'updated_at' => now(),
         ]);
 
-        Audit::log('project.link_repo', $project->slug, 'ok', ['repo' => $d['repository']]);
+        $syncedFiles = [];
+        if (!empty($d['repository'])) {
+            $conn = DB::table('database_connections')->where('project_id', $id)->first();
+            if ($conn) {
+                try {
+                    $dbPassword = Crypt::decryptString($conn->password_encrypted);
+                    $syncedFiles = app(\App\Services\RepoEnvSyncService::class)->sync($d['repository'], [
+                        'host' => $conn->host,
+                        'port' => $conn->port,
+                        'db_name' => $conn->db_name,
+                        'db_user' => $conn->username,
+                        'password' => $dbPassword,
+                    ]);
+                } catch (\Throwable $e) {}
+            }
+        }
+
+        Audit::log('project.link_repo', $project->slug, 'ok', ['repo' => $d['repository'], 'synced_files' => $syncedFiles]);
         return response()->json([
-            'message' => 'Repository berhasil dihubungkan ke proyek.',
+            'message' => 'Repository berhasil dihubungkan ke proyek.' . (!empty($syncedFiles) ? ' File .env di repository otomatis disinkronkan.' : ''),
             'repository' => $d['repository'] ?: null,
+            'env_synced' => !empty($syncedFiles),
+            'synced_files' => $syncedFiles,
         ]);
     }
 
@@ -143,6 +191,10 @@ class ProjectController extends Controller
 
         if (!$user->isSuperAdmin() && $project->created_by != $user->id) {
             abort(403, 'Akses ditolak: Hanya pemilik proyek atau Super Admin yang dapat mengeksekusi skrip pada proyek ini.');
+        }
+
+        if ($user->role === 'user') {
+            return response()->json(['message' => 'Role Operator tidak diizinkan mengeksekusi skrip SQL langsung pada database.'], 403);
         }
 
         $sql = '';
